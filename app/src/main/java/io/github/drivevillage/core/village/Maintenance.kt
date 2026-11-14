@@ -162,7 +162,7 @@ object Maintenance {
      * 정비 퀘스트 응답(자기 신고). 열린 퀘스트만 받는다.
      * - 어떤 응답이든 같은 작은 보상(공방 톱니 1개). 단, 같은 퀘스트 주기 안에서는 1회만.
      * - [QuestResponse.DONE]: 기준점을 지금(주행거리·날짜)으로 옮기고 새 주기를 시작, 공방 1단계 증축.
-     *   [serviceKm](정비 당시 주행거리, 선택)를 넣으면 그 값을 기준으로 쓰고 기념 장식 1개를 더 준다.
+     *   [serviceKm](정비 당시 주행거리, 선택, 0 이상 현재 값 이하)를 넣으면 기념 장식 1개를 더 준다. 기준점에는 쓰지 않는다.
      *   주행거리를 모르고 입력도 없으면 그 주기의 km 기준은 비워 둔다(날짜로만 다시 열린다).
      * - [QuestResponse.RESERVED]: [RESERVE_RECHECK_DAYS]일 뒤 재확인으로 다시 연다.
      * - [QuestResponse.LATER]: [LATER_KM]km 또는 [LATER_DAYS]일 중 먼저 오는 쪽에 다시 연다.
@@ -177,8 +177,6 @@ object Maintenance {
         if (serviceKm != null) {
             if (response != QuestResponse.DONE || odoKm == null) return null
             if (serviceKm.isNaN() || serviceKm.isInfinite() || serviceKm < 0 || serviceKm > odoKm) return null
-            // 기록하자마자 다시 도래하는 값(정비 주기보다 오래된 주행거리)은 받지 않는다: 주기당 1회 보상 우회 방지.
-            if (serviceKm < minServiceKm(def, setup, odoKm)) return null
         }
         val rec0 = state.maintenance.records[def.id] ?: base(def, state.maintenance, setup)
         val existing = state.materials.mapTo(HashSet()) { it.id }
@@ -193,10 +191,13 @@ object Maintenance {
             QuestResponse.DONE -> {
                 if (serviceKm != null) {
                     val id = "memo-${def.id}-${rec0.cycle}"
-                    if (id !in existing) rewards += Material(id, MaterialKind.MEMORIAL, today, eventId, "${SceneLedger.dateLabel(today)} · ${def.title} 기록")
+                    val kmLabel = Math.round(serviceKm)
+                    if (id !in existing) rewards += Material(id, MaterialKind.MEMORIAL, today, eventId, "${SceneLedger.dateLabel(today)} · ${def.title} ${kmLabel}km 기록")
                 }
+                // 기준점은 언제나 지금(주행거리·날짜). 입력한 정비 당시 주행거리는 기념패의 기록으로만 남긴다
+                // (오래된 값을 기준으로 쓰면 곧바로 다시 도래해 주기당 1회 보상이 우회된다).
                 QuestRecord(
-                    baseKm = serviceKm ?: odoKm, baseEpochDay = today, completions = rec0.completions + 1,
+                    baseKm = odoKm, baseEpochDay = today, completions = rec0.completions + 1,
                     cycle = rec0.cycle + 1, rewardedCycle = rec0.cycle,
                 )
             }
@@ -215,12 +216,6 @@ object Maintenance {
             materials = state.materials + rewards,
         )
         return next to rewards
-    }
-
-    /** '했어요'에 넣을 수 있는 정비 당시 주행거리의 하한: 기록 직후 km 쪽으로 다시 도래하지 않는 값. */
-    fun minServiceKm(def: QuestDef, setup: MaintenanceSetup, odoKm: Double): Double {
-        val interval = def.intervalKm(setup) ?: return 0.0
-        return (odoKm - interval + 1.0).coerceAtLeast(0.0)
     }
 
     /** '예약했어요' 뒤 재확인까지의 일수(팀 가정값). */

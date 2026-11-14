@@ -426,34 +426,37 @@ class VillageCoreTest {
         assertFalse(Maintenance.status(QuestDef.ENGINE_OIL, a, null, d + 2)!!.open)
     }
 
-    @Test fun quest_done_withServiceKm_givesMemorial_andUsesThatBase() {
+    @Test fun quest_done_withServiceKm_givesMemorial_baseStaysNow() {
         val d = day0.toEpochDay()
         val s = withSetup(10_000.0, d)
         val (a, rw) = Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, 20_300.0, d + 3, serviceKm = 20_050.0)!!
         assertEquals(setOf(MaterialKind.GEAR, MaterialKind.MEMORIAL), rw.map { it.kind }.toSet())
-        assertEquals(20_050.0, Maintenance.status(QuestDef.ENGINE_OIL, a, 20_300.0, d + 3)!!.baseKm!!, 0.0)
+        assertEquals(20_300.0, Maintenance.status(QuestDef.ENGINE_OIL, a, 20_300.0, d + 3)!!.baseKm!!, 0.0) // 기준점은 지금
+        assertTrue(rw.first { it.kind == MaterialKind.MEMORIAL }.tag.contains("20050km"))
         // 현재 주행거리보다 큰 값·음수·비정상 값, '했어요' 외 응답의 입력은 거부
-        for (bad in listOf(20_301.0, -1.0, Double.NaN, 10_300.0)) assertNull(Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, 20_300.0, d + 3, bad))
+        for (bad in listOf(20_301.0, -1.0, Double.NaN)) assertNull(Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, 20_300.0, d + 3, bad))
         assertNull(Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, null, d + 3, 20_000.0)) // 주행거리를 모르면 입력 불가
         assertNull(Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.LATER, 20_300.0, d + 3, 20_000.0))
         assertTrue(rw.none { it.tag.contains("확인") })
         assertTrue(StateValidator.isValid(a))
     }
 
-    /** 오래된 정비 당시 주행거리로 '했어요'를 반복해 보상을 계속 받는 경로가 없다. */
-    @Test fun quest_done_withOldServiceKm_cannotLoopRewards() {
+    /** 정비 당시 주행거리를 어떤 값으로 넣어도 기준점은 지금이라, 짧게 달리며 '했어요'를 반복해 보상을 받을 수 없다. */
+    @Test fun quest_done_serviceKmNeverMovesBase_noRewardLoop() {
         val d = day0.toEpochDay()
         var s = withSetup(10_000.0, d)
         var got = 0
+        var odo = 50_000.0
         repeat(20) {
-            val min = Maintenance.minServiceKm(QuestDef.ENGINE_OIL, s.maintenance.setup!!, 50_000.0)
-            for (km in listOf(30_000.0, min)) {
-                Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, 50_000.0, d + 1, km)?.let { (n, rw) -> s = n; got += rw.size }
+            for (km in listOf(0.0, 30_000.0, odo - 9_999.0, odo)) {
+                Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, odo, d + 1, km)?.let { (n, rw) -> s = n; got += rw.size }
             }
+            odo += 2
         }
         assertEquals(2, got) // 처음 한 번(톱니 + 기념패)뿐
         assertEquals(1, s.maintenance.workshopLevel)
-        assertFalse(Maintenance.status(QuestDef.ENGINE_OIL, s, 50_000.0, d + 1)!!.open)
+        val st = Maintenance.status(QuestDef.ENGINE_OIL, s, 50_000.0, d + 1)!!
+        assertEquals(10_000.0, st.kmLeft!!, 1e-9) // 다음 도래까지 정확히 한 주기
     }
 
     /** 시계가 앞선 상태에서 응답해도, 정상 날짜로 돌아오면 체크인이 다시 열린다. */

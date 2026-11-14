@@ -295,14 +295,13 @@ private fun QuestCard(vm: VillageViewModel, st: QuestStatus, currentOdo: Double?
                         OutlinedButton(onClick = { vm.respondQuest(st.def, QuestResponse.LATER) }) { Text(QuestResponse.LATER.label, fontSize = 12.sp) }
                     }
                 } else {
-                    val minKm = vm.minServiceKm(st.def)
-                    if (currentOdo != null && minKm != null) {
-                        Stepper("정비 당시 주행거리(선택)", "${serviceKm.roundToLong()}km", listOf("-1000" to -1000.0, "-100" to -100.0, "+100" to 100.0)) {
-                            serviceKm = (serviceKm + it).coerceIn(minKm, currentOdo)
+                    if (currentOdo != null) {
+                        Stepper("정비 당시 주행거리(선택, 기념패에 기록)", "${serviceKm.roundToLong()}km", listOf("-1000" to -1000.0, "-100" to -100.0, "+100" to 100.0)) {
+                            serviceKm = (serviceKm + it).coerceIn(0.0, currentOdo)
                         }
                     }
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        if (currentOdo != null && minKm != null) {
+                        if (currentOdo != null) {
                             Button(onClick = { vm.respondQuest(st.def, QuestResponse.DONE, serviceKm) }) { Text("이 주행거리로 기록(+기념패)", fontSize = 12.sp) }
                         }
                         OutlinedButton(onClick = { vm.respondQuest(st.def, QuestResponse.DONE) }) { Text("주행거리 없이 기록", fontSize = 12.sp) }

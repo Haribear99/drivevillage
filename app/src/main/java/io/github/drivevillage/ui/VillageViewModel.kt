@@ -259,13 +259,6 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
      * 정비 퀘스트 응답: 했어요 / 예약했어요 / 다음에. 무엇이든 같은 작은 보상(주기마다 1회).
      * [serviceKm]은 '했어요'에서 정비 당시 주행거리를 직접 넣었을 때만(기념 장식 +1).
      */
-    /** '했어요'에 넣을 수 있는 정비 당시 주행거리 하한. 주행거리·설정을 모르면 null(입력 없이 기록만). */
-    fun minServiceKm(def: QuestDef): Double? {
-        val odo = currentOdo() ?: return null
-        val setup = state.value.maintenance.setup ?: return null
-        return Maintenance.minServiceKm(def, setup, odo)
-    }
-
     fun respondQuest(def: QuestDef, response: QuestResponse, serviceKm: Double? = null) {
         if (!inVillage()) return
         val today = today()
