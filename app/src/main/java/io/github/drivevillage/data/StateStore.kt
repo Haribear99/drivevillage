@@ -2,6 +2,7 @@ package io.github.drivevillage.data
 
 import io.github.drivevillage.core.village.AppState
 import io.github.drivevillage.core.village.Decoration
+import io.github.drivevillage.core.village.ItemSource
 import io.github.drivevillage.core.village.Maintenance
 import io.github.drivevillage.core.village.SceneLedger
 import kotlinx.serialization.json.Json
@@ -112,11 +113,12 @@ class FileStateStore(
 object StateValidator {
     private const val EPS = 1e-6
     private const val MAX_TAG = 40
+    private const val LEGACY_JOURNEY_PER_DAY = 2
 
     fun isValid(s: AppState): Boolean {
         val l = s.ledger
         fun finiteNonNeg(d: Double) = !d.isNaN() && !d.isInfinite() && d >= 0.0
-        val materialDays = s.materials.groupBy { it.epochDay }
+        val journeyDays = s.materials.filter { it.kind.source == ItemSource.JOURNEY }.groupBy { it.epochDay }
         val slots = s.materials.mapNotNull { it.placedSlot }
         val setup = s.maintenance.setup
         return s.version == 1 &&
@@ -128,11 +130,15 @@ object StateValidator {
             l.scenes.size <= l.sceneCount &&
             l.scenes.all { it.deltaKm + EPS >= SceneLedger.MIN_SCENE_KM && (it.tag == null || (it.tag.isNotBlank() && it.tag.length <= MAX_TAG)) } &&
             l.scenes.map { it.eventId }.toSet().size == l.scenes.size &&
-            // 재료: id 중복 없음, 하루 지급량 상한(시계가 앞섰다 돌아온 이력도 허용).
+            // 아이템: id 중복 없음. 정산 재료는 하루 2개 이하(0.1.0은 하루 2개, 0.1.1부터 1개 — 이전 저장을 손상으로 보지 않게),
+            // 정산 재료가 있는 날 수 ≤ 정산 수, 기념물 수 ≤ 셈한 이정표 수.
             s.materials.map { it.id }.toSet().size == s.materials.size &&
-            materialDays.values.all { it.size <= SceneLedger.MATERIALS_PER_DAY } &&
-            materialDays.size <= l.sceneCount &&
-            (s.materials.isEmpty() || l.lastMaterialEpochDay != null) &&
+            journeyDays.values.all { it.size <= LEGACY_JOURNEY_PER_DAY } &&
+            journeyDays.size <= l.sceneCount &&
+            l.milestonesCounted >= 0 &&
+            s.materials.count { it.kind.source == ItemSource.MILESTONE } <= l.milestonesCounted &&
+            s.materials.count { it.kind.source == ItemSource.SEASON } <= l.sceneCount &&
+            (journeyDays.isEmpty() || l.lastMaterialEpochDay != null) &&
             // 슬롯: 범위 안, 한 슬롯에 하나.
             slots.all { it in 0 until Decoration.SLOT_COUNT } && slots.toSet().size == slots.size &&
             // 미션: 하루 최대 1개 도장, 아는 미션만.
@@ -140,7 +146,10 @@ object StateValidator {
             // 정비: 설정값 범위, 아는 퀘스트만, 완료 수 합 = 공방 단계.
             (setup == null || (finiteNonNeg(setup.lastServiceKm) && setup.oilKm in Maintenance.MIN_OIL_KM..Maintenance.MAX_OIL_KM &&
                 setup.oilMonths in Maintenance.MIN_MONTHS..Maintenance.MAX_MONTHS)) &&
-            s.maintenance.records.values.all { it.completions >= 1 && (it.baseKm == null || finiteNonNeg(it.baseKm)) } &&
+            s.maintenance.records.values.all {
+                it.completions >= 0 && it.cycle >= 0 && (it.rewardedCycle == null || it.rewardedCycle in 0..it.cycle) &&
+                    (it.baseKm == null || finiteNonNeg(it.baseKm)) && (it.snoozeUntilKm == null || finiteNonNeg(it.snoozeUntilKm))
+            } &&
             // 앞으로 퀘스트·미션·태그 문구가 바뀌어도 이전 이력을 손상으로 보지 않도록, 모르는 id·문구는 허용한다(표시만 건너뜀).
             s.maintenance.records.values.sumOf { it.completions } <= s.maintenance.workshopLevel &&
             (s.maintenance.records.isEmpty() || setup != null)

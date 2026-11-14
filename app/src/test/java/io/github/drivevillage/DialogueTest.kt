@@ -24,7 +24,7 @@ class DialogueTest {
         for (km in listOf(null, 1, 12, 42, 300)) for (slot in TimeSlot.entries) for (day in listOf(null, 1, 37))
             for (quests in listOf(emptyList(), listOf(QuestDef.ENGINE_OIL.title), listOf(QuestDef.COOLANT_LEVEL.title, QuestDef.LIGHTS.title)))
                 for (placed in listOf(null, MaterialKind.GLASS.label)) for (count in listOf(0, 2))
-                    out += TripSummary(km, slot, day, quests, placed, count)
+                    for (ed in listOf(null, 3)) out += TripSummary(km, slot, day, quests, placed, count, ed)
         return out
     }
 
@@ -56,7 +56,7 @@ class DialogueTest {
     @Test fun missingFacts_neverPickTemplatesNeedingThem() {
         val s = TripSummary(null, TimeSlot.DAY, null, emptyList(), null, 0)
         for (r in Resident.entries) for (c in LineContext.entries) for (t in gen.candidates(r, c, s)) {
-            assertTrue(t.text, t.slots.none { it.token in listOf("{km}", "{day}", "{quest}", "{material}", "{count}") })
+            assertTrue(t.text, t.slots.none { it.token in listOf("{km}", "{day}", "{quest}", "{material}", "{count}", "{days}") })
         }
     }
 

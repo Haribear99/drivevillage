@@ -26,8 +26,12 @@ data class LedgerState(
     val sceneCount: Int = 0,
     /** 장면으로 정산된 거리의 합(km). */
     val sceneKm: Double = 0.0,
-    /** 재료를 마지막으로 지급한 날(epochDay). 하루 1회 지급의 근거. */
+    /** 정산 재료를 마지막으로 지급한 날(epochDay). 하루 1회 상한의 근거. */
     val lastMaterialEpochDay: Long? = null,
+    /** 지금까지 넘은(지급 여부와 무관하게 셈한) 1,000km 이정표 수. 같은 이정표로 두 번 지급하지 않는 근거. */
+    val milestonesCounted: Int = 0,
+    /** 계절 장식을 마지막으로 준 계절 번호([SceneLedger.seasonIndex]). */
+    val lastSeasonIndex: Long? = null,
     /** 기준값보다 작은 값을 한 번 읽었을 때의 후보. 같은 값이 다음 정산에도 읽혀야 기준값을 바꾼다(일시 오류 방지). */
     val reversalCandidateKm: Double? = null,
     /** 최근 장면(최대 [SceneLedger.HISTORY_LIMIT]개). */
@@ -40,18 +44,33 @@ data class SceneRecord(
     val epochDay: Long,
     val atMillis: Long,
     val deltaKm: Double,
-    /** 이 장면으로 지급한 재료 id. 같은 날 두 번째 장면부터는 비어 있다. */
+    /** 이 정산으로 지급한 아이템 id(재료·기념물·계절 장식). */
     val materialIds: List<String> = emptyList(),
+    /** 직전 정산(또는 마을 시작) 시각. 경과일 표시용. 없으면 null. */
+    val sinceMillis: Long? = null,
     /** 사용자가 고른 한 줄 맥락(프리셋). */
     val tag: String? = null,
 )
 
+/** 아이템 출처. 마을 성장 점수의 가중치를 정한다. */
 @Serializable
-enum class MaterialKind(val label: String) {
-    WOOD("나무 조각"), STONE("둥근 돌"), SEED("꽃씨 주머니"), GLASS("유리 구슬"), CLOTH("천 조각"),
+enum class ItemSource { JOURNEY, MILESTONE, SEASON, MAINTENANCE, MEMORIAL }
+
+@Serializable
+enum class MaterialKind(val label: String, val source: ItemSource) {
+    // 정산 재료(정산 1회 = 1개, 하루 상한 1회)
+    WOOD("나무 조각", ItemSource.JOURNEY), STONE("둥근 돌", ItemSource.JOURNEY), SEED("꽃씨 주머니", ItemSource.JOURNEY),
+    GLASS("유리 구슬", ItemSource.JOURNEY), CLOTH("천 조각", ItemSource.JOURNEY),
+    // 1,000km 이정표 기념물
+    MONUMENT("이정표 기념비", ItemSource.MILESTONE),
+    // 새 계절 첫 정산
+    SPRING_GARLAND("봄 꽃줄", ItemSource.SEASON), SUMMER_LANTERN("여름 등불", ItemSource.SEASON),
+    AUTUMN_WREATH("가을 잎 화환", ItemSource.SEASON), WINTER_STAR("겨울 별 장식", ItemSource.SEASON),
+    // 정비 응답(작은 보상)과 '했어요' + 주행거리 입력(기념 장식)
+    GEAR("공방 톱니", ItemSource.MAINTENANCE), MEMORIAL("정비 기념패", ItemSource.MEMORIAL),
 }
 
-/** 재료 한 개. 날짜와 한 줄 기억 태그를 가진다. [placedSlot]이 있으면 마을 슬롯에 놓인 것. */
+/** 아이템(재료·기념물·장식) 한 개. 날짜와 한 줄 기억 태그를 가진다. [placedSlot]이 있으면 마을 슬롯에 놓인 것. */
 @Serializable
 data class Material(
     val id: String,
@@ -86,10 +105,21 @@ data class MaintenanceSetup(
 
 @Serializable
 data class QuestRecord(
-    /** 완료 신고 때의 주행거리. 읽지 못했으면 null(그 주기는 날짜만으로 연다). */
+    /** 기준 주행거리('했어요' 때의 값). 읽지 못했으면 null(그 주기는 날짜만으로 연다). */
     val baseKm: Double?,
     val baseEpochDay: Long,
+    /** '했어요' 누적 수(= 공방 증축에 반영). */
     val completions: Int,
+    /** 퀘스트 주기 번호. '했어요'마다 1 증가. 응답 보상은 주기마다 1회. */
+    val cycle: Int = 0,
+    /** 응답 보상을 준 마지막 주기. */
+    val rewardedCycle: Int? = null,
+    /** '예약했어요'·'다음에'로 미룬 동안 숨김. 이 날짜(포함)부터 다시 보인다. */
+    val snoozeUntilDay: Long? = null,
+    /** '다음에'로 미룬 동안 숨김. 이 주행거리(포함)부터 다시 보인다(날짜와 먼저 오는 쪽). */
+    val snoozeUntilKm: Double? = null,
+    /** '예약했어요'로 미룬 경우 재확인 문구를 보인다. */
+    val reservedRecheck: Boolean = false,
 )
 
 @Serializable

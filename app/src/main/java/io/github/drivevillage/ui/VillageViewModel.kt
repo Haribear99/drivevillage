@@ -19,6 +19,7 @@ import io.github.drivevillage.core.village.Material
 import io.github.drivevillage.core.village.MissionDef
 import io.github.drivevillage.core.village.OdometerReading
 import io.github.drivevillage.core.village.QuestDef
+import io.github.drivevillage.core.village.QuestResponse
 import io.github.drivevillage.core.village.Resident
 import io.github.drivevillage.core.village.SceneLedger
 import io.github.drivevillage.core.village.SceneRecord
@@ -52,6 +53,8 @@ sealed interface OpenResult {
         val record: SceneRecord,
         val newMaterials: List<Material>,
         val alreadyGotToday: Boolean,
+        val milestonesCrossed: Int,
+        val monumentsGranted: Int,
         val missionDone: MissionDef?,
     ) : OpenResult
 }
@@ -171,7 +174,7 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
                 SceneResult.Boarding -> OpenResult.Boarding
                 SceneResult.Reversed -> OpenResult.Reversed
                 is SceneResult.Held -> OpenResult.Held(result.reason)
-                is SceneResult.Scene -> OpenResult.Scene(result.record, result.newMaterials, result.alreadyGotToday, result.missionDone)
+                is SceneResult.Scene -> OpenResult.Scene(result.record, result.newMaterials, result.alreadyGotToday, result.milestonesCrossed, result.monumentsGranted, result.missionDone)
             }
             _open.value = shown
             Log.i(TAG, "settle=${result::class.simpleName} odo=${_odoKm.value} saved=${r.saved}")
@@ -179,7 +182,7 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
             val bubble = when (shown) {
                 is OpenResult.Scene -> {
                     val who = Resident.entries[Math.floorMod(st.ledger.sceneCount, Resident.entries.size)]
-                    Bubble(who, lines.line(who, LineContext.SCENE, summary(shown.record.deltaKm, shown.newMaterials.size), st.ledger.sceneCount))
+                    Bubble(who, lines.line(who, LineContext.SCENE, summary(shown.record.deltaKm, shown.newMaterials.size, elapsedDays(shown.record)), st.ledger.sceneCount))
                 }
                 OpenResult.FirstMeet, OpenResult.Boarding, OpenResult.Reversed -> {
                     val seed = (st.ledger.baselineKm ?: 0.0).toInt()
@@ -194,7 +197,11 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 대사 입력: 사실·수치는 모두 여기(코드)서 채운다. */
-    fun summary(deltaKm: Double?, materialsReceived: Int): TripSummary {
+    /** 직전 정산 이후 경과일(같은 날이면 0). 직전 정산이 없으면 null. */
+    fun elapsedDays(rec: SceneRecord): Int? =
+        rec.sinceMillis?.let { (rec.epochDay - SceneLedger.epochDay(it, zone)).coerceAtLeast(0).toInt() }
+
+    fun summary(deltaKm: Double?, materialsReceived: Int, elapsedDays: Int? = null): TripSummary {
         val st = state.value
         val today = today()
         return TripSummary(
@@ -204,6 +211,7 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
             openQuests = Maintenance.openQuests(st, currentOdo(), today).map { it.def.title },
             placedToday = Decoration.placedToday(st, today)?.kind?.label,
             materialsReceived = materialsReceived,
+            elapsedDays = elapsedDays?.takeIf { it >= 1 },
         )
     }
 
@@ -246,15 +254,32 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun completeQuest(def: QuestDef) {
+    /**
+     * 정비 퀘스트 응답: 했어요 / 예약했어요 / 다음에. 무엇이든 같은 작은 보상(주기마다 1회).
+     * [serviceKm]은 '했어요'에서 정비 당시 주행거리를 직접 넣었을 때만(기념 장식 +1).
+     */
+    fun respondQuest(def: QuestDef, response: QuestResponse, serviceKm: Double? = null) {
         if (!inVillage()) return
         val today = today()
         val odo = currentOdo()
         viewModelScope.launch {
-            if (update { Maintenance.complete(it, def, odo, today) }) {
-                _notice.value = "「${def.title}」 완료를 직접 신고했어요. 공방이 한 칸 증축됐어요."
-                _bubble.value = Bubble(Resident.CRAFTSMAN, lines.line(Resident.CRAFTSMAN, LineContext.WORKSHOP, summary(null, 0), state.value.maintenance.workshopLevel))
-            } else _notice.value = "지금 열린 부탁이 아니라 신고할 수 없어요."
+            val r = repo.mutate { cur ->
+                val out = Maintenance.respond(cur, def, response, odo, today, serviceKm)
+                (out?.first ?: cur) to out?.second
+            }
+            val rewards = r.value
+            if (!r.saved || rewards == null) {
+                _notice.value = if (!r.saved) SAVE_FAIL else "지금 응답할 수 있는 부탁이 아니에요."
+                return@launch
+            }
+            val what = when (response) {
+                QuestResponse.DONE -> "「${def.title}」 했어요로 기록했어요. 공방이 한 칸 늘었어요."
+                QuestResponse.RESERVED -> "「${def.title}」 예약했어요로 기록했어요. ${Maintenance.RESERVE_RECHECK_DAYS}일 뒤에 다시 여쭐게요."
+                QuestResponse.LATER -> "「${def.title}」 다음에로 기록했어요. ${Maintenance.LATER_KM.toInt()}km 또는 ${Maintenance.LATER_DAYS}일 중 먼저 오는 때에 다시 알려 드려요."
+            }
+            val got = if (rewards.isEmpty()) " 이번 주기의 응답 보상은 이미 받았어요." else " 받은 것: " + rewards.joinToString(", ") { it.kind.label }
+            _notice.value = what + got
+            _bubble.value = Bubble(Resident.CRAFTSMAN, lines.line(Resident.CRAFTSMAN, LineContext.WORKSHOP, summary(null, 0), state.value.maintenance.workshopLevel + rewards.size))
         }
     }
 

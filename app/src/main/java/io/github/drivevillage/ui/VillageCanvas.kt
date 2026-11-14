@@ -31,6 +31,7 @@ object VillageLayout {
     val slots = listOf(
         Offset(0.12f, 0.86f), Offset(0.28f, 0.80f), Offset(0.44f, 0.88f),
         Offset(0.60f, 0.80f), Offset(0.76f, 0.88f), Offset(0.90f, 0.78f),
+        Offset(0.08f, 0.70f), Offset(0.66f, 0.93f),
     )
     val residents = mapOf(
         Resident.CRAFTSMAN to Offset(0.33f, 0.64f),
@@ -190,6 +191,44 @@ fun DrawScope.drawMaterial(kind: MaterialKind, c: Offset, r: Float) {
         MaterialKind.CLOTH -> {
             drawLine(Color(0xFF4A3A2A), Offset(c.x - r * 0.6f, c.y + r), Offset(c.x - r * 0.6f, c.y - r), strokeWidth = r * 0.15f)
             drawPath(Path().apply { moveTo(c.x - r * 0.6f, c.y - r); lineTo(c.x + r, c.y - r * 0.5f); lineTo(c.x - r * 0.6f, c.y); close() }, Color(0xFFE76F51))
+        }
+        MaterialKind.MONUMENT -> { // 이정표 기념비: 받침 위 돌기둥과 별
+            drawRect(Color(0xFF8A8F98), Offset(c.x - r, c.y + r * 0.5f), Size(r * 2, r * 0.4f))
+            drawRect(Color(0xFFB8BEC6), Offset(c.x - r * 0.45f, c.y - r * 1.2f), Size(r * 0.9f, r * 1.7f))
+            drawCircle(Color(0xFFFFD36B), r * 0.28f, Offset(c.x, c.y - r * 0.7f))
+        }
+        MaterialKind.SPRING_GARLAND -> {
+            listOf(Color(0xFFFF8FA3), Color(0xFFFFFFFF), Color(0xFFFFB3C6)).forEachIndexed { i, col ->
+                drawCircle(col, r * 0.35f, Offset(c.x - r * 0.7f + i * r * 0.7f, c.y - (if (i == 1) r * 0.3f else 0f)))
+            }
+        }
+        MaterialKind.SUMMER_LANTERN -> {
+            drawLine(Color(0xFF4A3A2A), Offset(c.x, c.y - r), Offset(c.x, c.y - r * 0.6f), strokeWidth = r * 0.12f)
+            drawOval(Color(0xFFFF9F43), Offset(c.x - r * 0.6f, c.y - r * 0.6f), Size(r * 1.2f, r * 1.3f))
+            drawOval(Color(0x88FFFFFF), Offset(c.x - r * 0.25f, c.y - r * 0.35f), Size(r * 0.5f, r * 0.7f))
+        }
+        MaterialKind.AUTUMN_WREATH -> {
+            drawCircle(Color(0xFFD9822B), r * 0.8f, c, style = Stroke(width = r * 0.35f))
+            drawCircle(Color(0xFFB5452B), r * 0.18f, Offset(c.x, c.y + r * 0.8f))
+        }
+        MaterialKind.WINTER_STAR -> {
+            for (k in 0 until 4) {
+                val ang = Math.toRadians(45.0 * k)
+                val dx = (kotlin.math.cos(ang) * r).toFloat(); val dy = (kotlin.math.sin(ang) * r).toFloat()
+                drawLine(Color(0xFFE8F4FF), Offset(c.x - dx, c.y - dy), Offset(c.x + dx, c.y + dy), strokeWidth = r * 0.18f)
+            }
+        }
+        MaterialKind.GEAR -> { // 공방 톱니
+            drawCircle(Color(0xFF9C7A4F), r * 0.8f, c)
+            for (k in 0 until 6) {
+                val ang = Math.toRadians(60.0 * k)
+                drawCircle(Color(0xFF9C7A4F), r * 0.22f, Offset(c.x + (kotlin.math.cos(ang) * r * 0.9f).toFloat(), c.y + (kotlin.math.sin(ang) * r * 0.9f).toFloat()))
+            }
+            drawCircle(Color(0xFF5A4630), r * 0.3f, c)
+        }
+        MaterialKind.MEMORIAL -> { // 정비 기념패
+            drawRoundRect(Color(0xFFC9A227), Offset(c.x - r * 0.8f, c.y - r * 0.6f), Size(r * 1.6f, r * 1.2f), CornerRadius(r * 0.2f))
+            drawRoundRect(Color(0xFFF2E3A0), Offset(c.x - r * 0.55f, c.y - r * 0.35f), Size(r * 1.1f, r * 0.7f), CornerRadius(r * 0.1f))
         }
     }
 }

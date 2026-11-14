@@ -62,6 +62,7 @@ enum class DueBy { KM, DATE, BOTH }
 
 data class QuestStatus(
     val def: QuestDef,
+    /** 도래했고 미룬 상태가 아니어서 응답을 받을 수 있음. */
     val open: Boolean,
     /** 열렸다면 어느 쪽이 도래했는지. */
     val dueBy: DueBy?,
@@ -71,6 +72,16 @@ data class QuestStatus(
     val daysLeft: Long?,
     val baseKm: Double?,
     val baseEpochDay: Long,
+    /** 주기상 도래했는지(미룸과 무관). */
+    val due: Boolean = open,
+    /** 도래했지만 '예약했어요'·'다음에'로 미룬 중. */
+    val snoozed: Boolean = false,
+    /** '예약했어요' 뒤 재확인 대상. */
+    val reservedRecheck: Boolean = false,
+    val snoozeDaysLeft: Long? = null,
+    val snoozeKmLeft: Double? = null,
+    /** 이번 주기에 응답 보상을 아직 받지 않았는지. */
+    val rewardAvailable: Boolean = true,
 )
 
 object Maintenance {
@@ -92,16 +103,21 @@ object Maintenance {
         return state.copy(maintenance = state.maintenance.copy(setup = setup.copy(setupEpochDay = keepDay)))
     }
 
-    /** 퀘스트 기준점: 마지막 완료 신고, 없으면 설정(정비 항목은 마지막 정비 시점, 체크인은 설정한 날). */
-    private fun base(def: QuestDef, s: MaintenanceState, setup: MaintenanceSetup): QuestRecord =
-        s.records[def.id] ?: when (def.kind) {
+    /** 퀘스트 기준점: 마지막 '했어요', 없으면 설정(정비 항목은 마지막 정비 시점, 체크인은 설정한 날). */
+    private fun base(def: QuestDef, s: MaintenanceState, setup: MaintenanceSetup): QuestRecord {
+        val rec = s.records[def.id]
+        if (rec != null && rec.completions > 0) return rec
+        val fromSetup = when (def.kind) {
             QuestKind.SERVICE -> QuestRecord(setup.lastServiceKm, setup.lastServiceEpochDay, 0)
             QuestKind.CHECK_IN -> QuestRecord(null, setup.setupEpochDay, 0)
         }
+        // 아직 '했어요'가 없으면 기준은 설정에서, 미룸·보상 기록은 저장된 기록에서.
+        return rec?.copy(baseKm = fromSetup.baseKm, baseEpochDay = fromSetup.baseEpochDay) ?: fromSetup
+    }
 
     /**
      * 도래 판정. [odoKm]이 null(주행거리 확인 불가)이면 km 쪽은 판정하지 않고 날짜만 본다.
-     * km·날짜 중 하나라도 도래하면 연다(먼저 도래하는 쪽).
+     * km·날짜 중 하나라도 도래하면 도래(먼저 도래하는 쪽). '예약했어요'·'다음에'로 미룬 동안은 열지 않는다.
      */
     fun status(def: QuestDef, state: AppState, odoKm: Double?, today: Long): QuestStatus? {
         val setup = state.maintenance.setup ?: return null
@@ -119,7 +135,17 @@ object Maintenance {
             byDate -> DueBy.DATE
             else -> null
         }
-        return QuestStatus(def, dueBy != null, dueBy, kmLeft, daysLeft, b.baseKm, b.baseEpochDay)
+        val snoozeDay = b.snoozeUntilDay
+        val snoozeKm = b.snoozeUntilKm
+        val snoozeOver = (snoozeDay != null && today >= snoozeDay) || (snoozeKm != null && odoKm != null && odoKm >= snoozeKm)
+        val snoozed = (snoozeDay != null || snoozeKm != null) && !snoozeOver
+        val due = dueBy != null
+        return QuestStatus(
+            def = def, open = due && !snoozed, dueBy = dueBy, kmLeft = kmLeft, daysLeft = daysLeft, baseKm = b.baseKm, baseEpochDay = b.baseEpochDay,
+            due = due, snoozed = due && snoozed, reservedRecheck = due && b.reservedRecheck,
+            snoozeDaysLeft = snoozeDay?.let { it - today }, snoozeKmLeft = if (snoozeKm != null && odoKm != null) snoozeKm - odoKm else null,
+            rewardAvailable = b.rewardedCycle != b.cycle,
+        )
     }
 
     fun all(state: AppState, odoKm: Double?, today: Long): List<QuestStatus> =
@@ -128,19 +154,68 @@ object Maintenance {
     fun openQuests(state: AppState, odoKm: Double?, today: Long): List<QuestStatus> = all(state, odoKm, today).filter { it.open }
 
     /**
-     * 자기 신고 완료. 열린 퀘스트만 받는다(같은 주기 안 재신고 불가). 기준점을 지금(주행거리·날짜)으로 옮기고 공방을 한 단계 증축한다.
-     * 주행거리를 모르면 그 주기의 km 기준은 비워 둔다(날짜로만 다시 열린다).
+     * 정비 퀘스트 응답(자기 신고). 열린 퀘스트만 받는다.
+     * - 어떤 응답이든 같은 작은 보상(공방 톱니 1개). 단, 같은 퀘스트 주기 안에서는 1회만.
+     * - [QuestResponse.DONE]: 기준점을 지금(주행거리·날짜)으로 옮기고 새 주기를 시작, 공방 1단계 증축.
+     *   [serviceKm](정비 당시 주행거리, 선택)를 넣으면 그 값을 기준으로 쓰고 기념 장식 1개를 더 준다.
+     *   주행거리를 모르고 입력도 없으면 그 주기의 km 기준은 비워 둔다(날짜로만 다시 열린다).
+     * - [QuestResponse.RESERVED]: [RESERVE_RECHECK_DAYS]일 뒤 재확인으로 다시 연다.
+     * - [QuestResponse.LATER]: [LATER_KM]km 또는 [LATER_DAYS]일 중 먼저 오는 쪽에 다시 연다.
+     * 앱은 정비 여부를 알 수 없다. 기록은 사용자의 응답일 뿐이다.
      */
-    fun complete(state: AppState, def: QuestDef, odoKm: Double?, today: Long): AppState? {
+    fun respond(
+        state: AppState, def: QuestDef, response: QuestResponse, odoKm: Double?, today: Long, serviceKm: Double? = null,
+    ): Pair<AppState, List<Material>>? {
         val st = status(def, state, odoKm, today) ?: return null
         if (!st.open) return null
-        val prev = state.maintenance.records[def.id]
-        val rec = QuestRecord(odoKm, today, (prev?.completions ?: 0) + 1)
-        return state.copy(
+        if (serviceKm != null) {
+            if (response != QuestResponse.DONE) return null
+            if (serviceKm.isNaN() || serviceKm.isInfinite() || serviceKm < 0) return null
+            if (odoKm != null && serviceKm > odoKm) return null
+        }
+        val setup = state.maintenance.setup ?: return null
+        val rec0 = state.maintenance.records[def.id] ?: base(def, state.maintenance, setup)
+        val existing = state.materials.mapTo(HashSet()) { it.id }
+        val eventId = "quest-${def.id}-${rec0.cycle}"
+        val tag = "${SceneLedger.dateLabel(today)} · ${def.title} 응답"
+        val rewards = mutableListOf<Material>()
+        if (rec0.rewardedCycle != rec0.cycle) {
+            val id = "gear-${def.id}-${rec0.cycle}"
+            if (id !in existing) rewards += Material(id, MaterialKind.GEAR, today, eventId, tag)
+        }
+        val rec = when (response) {
+            QuestResponse.DONE -> {
+                if (serviceKm != null) {
+                    val id = "memo-${def.id}-${rec0.cycle}"
+                    if (id !in existing) rewards += Material(id, MaterialKind.MEMORIAL, today, eventId, "${SceneLedger.dateLabel(today)} · ${def.title} 기록")
+                }
+                QuestRecord(
+                    baseKm = serviceKm ?: odoKm, baseEpochDay = today, completions = rec0.completions + 1,
+                    cycle = rec0.cycle + 1, rewardedCycle = rec0.cycle,
+                )
+            }
+            QuestResponse.RESERVED -> rec0.copy(
+                rewardedCycle = rec0.cycle, snoozeUntilDay = today + RESERVE_RECHECK_DAYS, snoozeUntilKm = null, reservedRecheck = true,
+            )
+            QuestResponse.LATER -> rec0.copy(
+                rewardedCycle = rec0.cycle, snoozeUntilDay = today + LATER_DAYS, snoozeUntilKm = odoKm?.plus(LATER_KM), reservedRecheck = false,
+            )
+        }
+        val next = state.copy(
             maintenance = state.maintenance.copy(
                 records = state.maintenance.records + (def.id to rec),
-                workshopLevel = state.maintenance.workshopLevel + 1,
+                workshopLevel = state.maintenance.workshopLevel + if (response == QuestResponse.DONE) 1 else 0,
             ),
+            materials = state.materials + rewards,
         )
+        return next to rewards
     }
+
+    /** '예약했어요' 뒤 재확인까지의 일수(팀 가정값). */
+    const val RESERVE_RECHECK_DAYS = 14L
+    /** '다음에' 재알림: 이 거리(km) 또는 [LATER_DAYS]일 중 먼저 오는 쪽(팀 가정값). */
+    const val LATER_KM = 500.0
+    const val LATER_DAYS = 14L
 }
+
+enum class QuestResponse(val label: String) { DONE("했어요"), RESERVED("예약했어요"), LATER("다음에") }

@@ -21,8 +21,10 @@ data class TripSummary(
     val openQuests: List<String>,
     /** 오늘 놓은 재료 이름. */
     val placedToday: String?,
-    /** 이번에 받은 재료 수(0이면 오늘 이미 받음). */
+    /** 이번 정산으로 받은 아이템 수(재료·기념물·계절 장식). 0이면 재료는 오늘 이미 받음. */
     val materialsReceived: Int,
+    /** 지난번 정산 이후 경과일(1일 이상일 때만). */
+    val elapsedDays: Int? = null,
 )
 
 enum class LineContext { BOARDING, SCENE, CHAT, WORKSHOP }
@@ -39,7 +41,7 @@ interface LineGenerator {
 
 /** 템플릿 슬롯. 값이 없으면 그 슬롯을 쓰는 템플릿은 고르지 않는다. */
 enum class Slot(val token: String) {
-    KM("{km}"), TIME("{time}"), DAY("{day}"), QUEST("{quest}"), MATERIAL("{material}"), COUNT("{count}"), NAME("{name}");
+    KM("{km}"), TIME("{time}"), DAY("{day}"), QUEST("{quest}"), MATERIAL("{material}"), COUNT("{count}"), NAME("{name}"), DAYS("{days}");
 }
 
 data class LineTemplate(val resident: Resident?, val context: LineContext, val text: String) {
@@ -53,16 +55,17 @@ object Templates {
     private val G = Resident.GARDENER
 
     val all: List<LineTemplate> = listOf(
-        // 하차(오늘의 장면)
-        t(null, LineContext.SCENE, "{time}에 {km}km를 달려 돌아왔네요, 오늘의 재료를 마을에 들여놓을게요."),
-        t(null, LineContext.SCENE, "오늘은 {km}km, 마을 {day}일째의 한 장면으로 남겨 둘게요."),
+        // 하차(지난번 이후의 여정 정산)
+        t(null, LineContext.SCENE, "{time}에 {km}km를 달려 돌아왔네요, 지난번 이후의 여정을 마을에 들여놓을게요."),
+        t(null, LineContext.SCENE, "지난번 이후 {km}km, 마을 {day}일째의 한 장면으로 남겨 둘게요."),
+        t(null, LineContext.SCENE, "지난번 이후 {days}일 동안의 {km}km, 한꺼번에 정리해 둘게요."),
         t(T, LineContext.SCENE, "{km}km 길 이야기를 들려줘서 고마워요, 지도에 한 줄 그어 둘게요."),
-        t(T, LineContext.SCENE, "{time} 길은 어땠어요? 오늘의 장면을 엽서에 적어 둘게요."),
-        t(G, LineContext.SCENE, "돌아오셨네요, 오늘 받은 재료 {count}개는 정원 옆에 잘 놓아 둘게요."),
+        t(T, LineContext.SCENE, "{time} 길은 어땠어요? 지난번 이후의 여정을 엽서에 적어 둘게요."),
+        t(G, LineContext.SCENE, "돌아오셨네요, 이번에 받은 {count}개는 정원 옆에 잘 놓아 둘게요."),
         t(G, LineContext.SCENE, "마을 {day}일째, {time} 공기가 좋네요."),
         t(C, LineContext.SCENE, "{km}km 수고했어요, 공방 불은 켜 두었어요."),
         t(C, LineContext.SCENE, "어서 와요, 공방에 「{quest}」 부탁이 하나 걸려 있어요."),
-        t(G, LineContext.SCENE, "오늘 재료는 이미 받았지만, 이 장면도 일기에 적어 둘게요."),
+        t(G, LineContext.SCENE, "재료는 하루 한 번이라 이번에는 이미 받았지만, 이 여정도 일기에 적어 둘게요."),
         // 탑승
         t(null, LineContext.BOARDING, "다녀오세요, 마을은 여기서 기다릴게요."),
         t(T, LineContext.BOARDING, "{time} 길 잘 다녀와요, 돌아오면 이야기 들려줘요."),
@@ -78,17 +81,17 @@ object Templates {
         t(G, LineContext.CHAT, "꽃밭 자리가 아직 남아 있어요, 재료가 생기면 하나 놓아 봐요."),
         t(G, LineContext.CHAT, "마을 {day}일째, 새싹이 조금 자랐어요."),
         // 정비 완료 자기 신고 직후(공방 장인). 신고한 사실만 말하고 차량 상태는 말하지 않는다.
-        t(C, LineContext.WORKSHOP, "신고 고마워요, 공방을 한 칸 늘렸어요."),
-        t(C, LineContext.WORKSHOP, "알려 줘서 고마워요, 공방에 새 기둥을 세웠어요."),
-        t(C, LineContext.WORKSHOP, "마을 {day}일째, 공방이 한 뼘 더 커졌어요."),
+        t(C, LineContext.WORKSHOP, "알려 줘서 고마워요, 공방 톱니 하나 챙겨 둘게요."),
+        t(C, LineContext.WORKSHOP, "답해 줘서 고마워요, 때가 되면 다시 여쭐게요."),
+        t(C, LineContext.WORKSHOP, "마을 {day}일째, 공방 장부에 적어 둘게요."),
     )
 
     /** 어떤 슬롯도 없는 안전한 대체 문장. */
     fun fallback(context: LineContext): String = when (context) {
         LineContext.BOARDING -> "다녀오세요, 마을은 여기서 기다릴게요."
-        LineContext.SCENE -> "돌아오셨네요, 오늘의 장면을 남겨 둘게요."
+        LineContext.SCENE -> "돌아오셨네요, 지난번 이후의 여정을 남겨 둘게요."
         LineContext.CHAT -> "오늘도 마을은 평온해요."
-        LineContext.WORKSHOP -> "신고 고마워요, 공방을 한 칸 늘렸어요."
+        LineContext.WORKSHOP -> "알려 줘서 고마워요, 공방 장부에 적어 둘게요."
     }
 }
 
@@ -98,7 +101,7 @@ object DialogueValidator {
     val FORBIDDEN = listOf("확인했", "확인됐", "점수", "연속", "보고 싶었", "왜 안 왔", "벌점")
 
     fun allowedNumbers(s: TripSummary): Set<String> = setOfNotNull(
-        s.deltaKm?.toString(), s.villageDay?.toString(), s.materialsReceived.toString(),
+        s.deltaKm?.toString(), s.villageDay?.toString(), s.materialsReceived.toString(), s.elapsedDays?.toString(),
     )
 
     fun isValid(line: String, s: TripSummary): Boolean {
@@ -135,6 +138,7 @@ class TemplateLineGenerator(private val pool: List<LineTemplate> = Templates.all
         .replace(Slot.MATERIAL.token, s.placedToday ?: "")
         .replace(Slot.COUNT.token, s.materialsReceived.toString())
         .replace(Slot.NAME.token, resident.displayName)
+        .replace(Slot.DAYS.token, s.elapsedDays?.toString() ?: "")
 
     private fun available(slot: Slot, s: TripSummary): Boolean = when (slot) {
         Slot.KM -> s.deltaKm != null
@@ -143,6 +147,7 @@ class TemplateLineGenerator(private val pool: List<LineTemplate> = Templates.all
         Slot.QUEST -> s.openQuests.isNotEmpty()
         Slot.MATERIAL -> s.placedToday != null
         Slot.COUNT -> s.materialsReceived > 0
+        Slot.DAYS -> s.elapsedDays != null && s.elapsedDays >= 1
     }
 }
 

@@ -6,6 +6,11 @@ import io.github.drivevillage.core.village.CarPreset
 import io.github.drivevillage.core.village.Decoration
 import io.github.drivevillage.core.village.DueBy
 import io.github.drivevillage.core.village.Maintenance
+import io.github.drivevillage.core.village.ItemSource
+import io.github.drivevillage.core.village.Material
+import io.github.drivevillage.core.village.MaterialKind
+import io.github.drivevillage.core.village.QuestResponse
+import io.github.drivevillage.core.village.VillageGrowth
 import io.github.drivevillage.core.village.MissionDef
 import io.github.drivevillage.core.village.Missions
 import io.github.drivevillage.core.village.OdometerReading
@@ -36,6 +41,8 @@ class VillageCoreTest {
     private fun km(v: Double) = OdometerReading.Km(v)
     private fun settle(s: AppState, v: Double, t: Long, gear: GearState = GearState.PARK) = SceneLedger.settle(s, km(v), gear, t, zone)
     private fun started(v: Double = 1000.0) = settle(AppState(), v, at(0, 8)).first
+    /** 정산 재료(JOURNEY) 수. */
+    private fun j(items: List<Material>) = items.count { it.kind.source == ItemSource.JOURNEY }
 
     // ── 정산 멱등성 ──
 
@@ -68,7 +75,7 @@ class VillageCoreTest {
         }
         val end = FileStateStore(file).load()
         assertEquals(1, end.ledger.sceneCount)
-        assertEquals(SceneLedger.MATERIALS_PER_DAY, end.materials.size)
+        assertEquals(1, j(end.materials))
     }
 
     @Test fun belowOneKm_accumulatesUntilThreshold() {
@@ -118,7 +125,7 @@ class VillageCoreTest {
         val (n, r) = settle(a, 1020.0, at(0, 20))
         assertTrue((r as SceneResult.Scene).alreadyGotToday)
         assertTrue(StateValidator.isValid(n))
-        assertEquals(SceneLedger.MATERIALS_PER_DAY, n.materials.size)
+        assertEquals(1, j(n.materials))
     }
 
     /** 시계가 400일 앞섰다가 돌아와도 저장이 막히지 않고, 정상 날짜에서 하루 1회 지급이 이어지며, 그 미래 날짜에 도달해도 하루 상한을 넘지 않는다. */
@@ -130,14 +137,14 @@ class VillageCoreTest {
         for (d in 0L..30L) {
             odo += 12
             val (n, r) = settle(FileStateStore(file).load(), odo, at(d, 18))
-            assertEquals("day $d", SceneLedger.MATERIALS_PER_DAY, (r as SceneResult.Scene).newMaterials.size)
+            assertEquals("day $d", 1, j((r as SceneResult.Scene).newMaterials))
             FileStateStore(file).save(n); s = n
         }
         odo += 12
         val (atFuture, rf) = settle(s, odo, at(400, 20)) // 앞서 받은 날에 실제로 도달
         assertTrue((rf as SceneResult.Scene).alreadyGotToday)
         assertTrue(StateValidator.isValid(atFuture))
-        assertEquals(SceneLedger.MATERIALS_PER_DAY * 32, atFuture.materials.size)
+        assertEquals(32, j(atFuture.materials))
     }
 
     /** 부팅 직후 RTC가 과거(마을 시작 전)로 잡히면 보류: 같은 실제 날에 재료가 늘지 않는다. */
@@ -157,7 +164,7 @@ class VillageCoreTest {
         var s = settle(AppState(), 1000.0, at(400)).first
         for (d in 1L..5L) {
             val (n, r) = settle(s, 1000.0 + d * 12, at(d))
-            assertEquals("day $d", SceneLedger.MATERIALS_PER_DAY, (r as SceneResult.Scene).newMaterials.size)
+            assertEquals("day $d", 1, j((r as SceneResult.Scene).newMaterials))
             s = n
         }
         assertEquals(day0.plusDays(1).toEpochDay(), s.village.foundedEpochDay)
@@ -188,28 +195,92 @@ class VillageCoreTest {
         assertEquals(12.0, (r as SceneResult.Scene).record.deltaKm, 1e-9)
     }
 
-    // ── 재료: 하루 1회, 거리와 무관한 동일량, 날짜·기억 태그 ──
+    // ── 성장 입력: 정산 재료(하루 1회), 이정표 기념물(최대 3), 계절 장식, 날짜·기억 태그 ──
 
-    @Test fun materials_oncePerDay_sameAmountRegardlessOfDistance() {
+    @Test fun journeyMaterial_onePerSettlement_dailyCapOne() {
         var s = started()
         val (a, ra) = settle(s, 1001.0, at(0)) // 1km
-        assertEquals(SceneLedger.MATERIALS_PER_DAY, (ra as SceneResult.Scene).newMaterials.size)
-        val (b, rb) = settle(a, 1300.0, at(0, 21)) // 같은 날 299km 더
+        assertEquals(1, j((ra as SceneResult.Scene).newMaterials))
+        val (b, rb) = settle(a, 1300.0, at(0, 21)) // 같은 날 두 번째 정산(299km)
         rb as SceneResult.Scene
         assertTrue(rb.alreadyGotToday)
-        assertTrue(rb.newMaterials.isEmpty())
-        assertEquals(SceneLedger.MATERIALS_PER_DAY, b.materials.size)
-        val (c, rc) = settle(b, 1600.0, at(1)) // 다음 날 300km
-        assertEquals(SceneLedger.MATERIALS_PER_DAY, (rc as SceneResult.Scene).newMaterials.size)
-        assertEquals(SceneLedger.MATERIALS_PER_DAY * 2, c.materials.size)
+        assertEquals(0, j(rb.newMaterials))
+        assertEquals(1, j(b.materials))
+        val (c, rc) = settle(b, 1600.0, at(1)) // 다음 날
+        assertEquals(1, j((rc as SceneResult.Scene).newMaterials))
+        assertEquals(2, j(c.materials))
         s = c
-        // 모든 재료에 날짜·태그·출처 이벤트, id 중복 없음
+        // 모든 아이템에 날짜·태그·출처 이벤트, id 중복 없음
         assertEquals(s.materials.size, s.materials.map { it.id }.toSet().size)
         s.materials.forEach { m ->
             assertTrue(m.tag.startsWith(SceneLedger.dateLabel(m.epochDay)))
             assertTrue(s.ledger.scenes.any { it.eventId == m.eventId })
         }
         assertTrue(StateValidator.isValid(s))
+    }
+
+    @Test fun milestone_everyThousandKm_once() {
+        var s = started(10_000.0)
+        val (a, ra) = settle(s, 10_999.0, at(0))
+        assertEquals(0, (ra as SceneResult.Scene).monumentsGranted)
+        val (b, rb) = settle(a, 11_000.0, at(1)) // 누적 1,000km 도달
+        rb as SceneResult.Scene
+        assertEquals(1, rb.milestonesCrossed); assertEquals(1, rb.monumentsGranted)
+        assertEquals(1, b.ledger.milestonesCounted)
+        assertEquals(listOf("mon-1"), b.materials.filter { it.kind == MaterialKind.MONUMENT }.map { it.id })
+        // 같은 누적 거리로 다시 열거나, 재시작해도 추가 지급 없음
+        val file = File(tmp.root, "mon.json"); FileStateStore(file).save(b)
+        val (c, rc) = settle(FileStateStore(file).load(), 11_000.0, at(1, 20))
+        assertEquals(SceneResult.Boarding, rc)
+        assertEquals(1, c.materials.count { it.kind == MaterialKind.MONUMENT })
+        val (d, rd) = settle(c, 11_500.0, at(2))
+        assertEquals(0, (rd as SceneResult.Scene).monumentsGranted)
+        s = d
+        assertTrue(StateValidator.isValid(s))
+    }
+
+    /** 한 번에 이정표 여러 개를 넘어도 기념물은 최대 3개. 넘은 이정표는 모두 셈해 다음에 다시 주지 않는다. */
+    @Test fun milestone_capThreePerSettlement_noBackPay() {
+        val (a, ra) = settle(started(10_000.0), 15_200.0, at(0)) // 5,200km → 이정표 5개
+        ra as SceneResult.Scene
+        assertEquals(5, ra.milestonesCrossed)
+        assertEquals(SceneLedger.MAX_MILESTONES_PER_SETTLEMENT, ra.monumentsGranted)
+        assertEquals(5, a.ledger.milestonesCounted)
+        assertEquals(3, a.materials.count { it.kind == MaterialKind.MONUMENT })
+        val (b, rb) = settle(a, 15_900.0, at(1)) // 5,900km: 새 이정표 없음
+        assertEquals(0, (rb as SceneResult.Scene).monumentsGranted)
+        val (c, rc) = settle(b, 16_000.0, at(2)) // 6,000km: 6번째 이정표 1개만
+        assertEquals(1, (rc as SceneResult.Scene).monumentsGranted)
+        assertTrue(c.materials.any { it.id == "mon-6" })
+        assertEquals(4, c.materials.count { it.kind == MaterialKind.MONUMENT })
+        assertEquals(c.materials.size, c.materials.map { it.id }.toSet().size)
+        assertTrue(StateValidator.isValid(c))
+    }
+
+    @Test fun season_firstSettlementOfNewSeason_once() {
+        val (a, ra) = settle(started(), 1010.0, at(0)) // 2026-11-15 가을
+        assertEquals(MaterialKind.AUTUMN_WREATH, (ra as SceneResult.Scene).seasonal!!.kind)
+        val (b, rb) = settle(a, 1020.0, at(5)) // 같은 계절
+        assertNull((rb as SceneResult.Scene).seasonal)
+        val (c, rc) = settle(b, 1030.0, at(20)) // 12월: 겨울
+        assertEquals(MaterialKind.WINTER_STAR, (rc as SceneResult.Scene).seasonal!!.kind)
+        val (d, rd) = settle(c, 1040.0, at(50)) // 1월: 같은 겨울
+        assertNull((rd as SceneResult.Scene).seasonal)
+        val (e, re) = settle(d, 1050.0, at(14)) // 시계가 가을로 되돌아가도 다시 주지 않음
+        assertNull((re as SceneResult.Scene).seasonal)
+        assertEquals(2, e.materials.count { it.kind.source == ItemSource.SEASON })
+        assertTrue(StateValidator.isValid(e))
+    }
+
+    @Test fun growthLevel_accumulatesFromAllInputs() {
+        val s0 = started()
+        assertEquals(1, VillageGrowth.level(s0))
+        var s = s0
+        var odo = 1000.0
+        for (d in 0L..20L) { odo += 60; s = settle(s, odo, at(d)).first }
+        val pts = VillageGrowth.points(s)
+        assertEquals(21 * 1 + 2 * 2 + 1 * 3, pts) // 재료 21 + 계절 2(가을·겨울) + 이정표 1(1,260km)
+        assertEquals(1 + pts / VillageGrowth.POINTS_PER_LEVEL, VillageGrowth.level(s))
     }
 
     @Test fun tag_onlyPresets_updatesMaterialsOfThatEventOnly() {
@@ -273,16 +344,79 @@ class VillageCoreTest {
         assertTrue(QuestDef.COOLANT_LEVEL.title.contains("수위 점검"))
     }
 
-    @Test fun quest_completeOnlyWhenOpen_resetsCycle_growsWorkshop() {
+    private fun gears(s: AppState) = s.materials.count { it.kind == MaterialKind.GEAR }
+
+    @Test fun quest_done_onlyWhenOpen_resetsBase_newCycle_growsWorkshop() {
         val d = day0.toEpochDay()
         val s = withSetup(10_000.0, d)
-        assertNull(Maintenance.complete(s, QuestDef.ENGINE_OIL, 15_000.0, d + 1)) // 아직 안 열림
-        val done = Maintenance.complete(s, QuestDef.ENGINE_OIL, 20_100.0, d + 40)!!
+        assertNull(Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, 15_000.0, d + 1)) // 아직 안 열림
+        val (done, rw) = Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, 20_100.0, d + 40)!!
+        assertEquals(listOf(MaterialKind.GEAR), rw.map { it.kind })
         assertEquals(1, done.maintenance.workshopLevel)
-        assertNull(Maintenance.complete(done, QuestDef.ENGINE_OIL, 20_100.0, d + 40)) // 같은 주기 재신고 불가
+        assertNull(Maintenance.respond(done, QuestDef.ENGINE_OIL, QuestResponse.DONE, 20_100.0, d + 40)) // 닫힘
         val st = Maintenance.status(QuestDef.ENGINE_OIL, done, 20_200.0, d + 41)!!
         assertFalse(st.open); assertEquals(9_900.0, st.kmLeft!!, 1e-9)
-        assertTrue(StateValidator.isValid(done))
+        assertTrue(st.rewardAvailable) // 새 주기에는 다시 보상 가능
+        // 다음 주기 도래 → 응답 보상 1개 더
+        val (next, rw2) = Maintenance.respond(done, QuestDef.ENGINE_OIL, QuestResponse.LATER, 30_100.0, d + 60)!!
+        assertEquals(1, rw2.size)
+        assertEquals(2, gears(next))
+        assertTrue(StateValidator.isValid(next))
+    }
+
+    /** 세 응답 모두 같은 작은 보상, 같은 주기 안에서는 1회만. */
+    @Test fun quest_anyResponse_sameSmallReward_oncePerCycle() {
+        val d = day0.toEpochDay()
+        for (first in QuestResponse.entries) {
+            val s = withSetup(10_000.0, d)
+            val (a, r1) = Maintenance.respond(s, QuestDef.ENGINE_OIL, first, 20_000.0, d + 1)!!
+            assertEquals(first.name, listOf(MaterialKind.GEAR), r1.map { it.kind })
+            if (first == QuestResponse.DONE) continue
+            // 미룸이 끝나 다시 열려도 같은 주기 → 보상 없음
+            val later = d + 1 + Maintenance.RESERVE_RECHECK_DAYS
+            val (b, r2) = Maintenance.respond(a, QuestDef.ENGINE_OIL, QuestResponse.LATER, 20_010.0, later)!!
+            assertTrue(first.name, r2.isEmpty())
+            val (c, r3) = Maintenance.respond(b, QuestDef.ENGINE_OIL, QuestResponse.DONE, 20_020.0, later + Maintenance.LATER_DAYS)!!
+            assertTrue(first.name, r3.isEmpty())
+            assertEquals(1, gears(c))
+            assertTrue(StateValidator.isValid(c))
+        }
+    }
+
+    @Test fun quest_reserved_reopensAfter14Days_asRecheck() {
+        val d = day0.toEpochDay()
+        val s = withSetup(10_000.0, d)
+        val (a, _) = Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.RESERVED, 20_000.0, d + 1)!!
+        val hidden = Maintenance.status(QuestDef.ENGINE_OIL, a, 25_000.0, d + 14)!! // km가 늘어도 날짜 전엔 숨김
+        assertFalse(hidden.open); assertTrue(hidden.snoozed)
+        val back = Maintenance.status(QuestDef.ENGINE_OIL, a, 20_000.0, d + 1 + Maintenance.RESERVE_RECHECK_DAYS)!!
+        assertTrue(back.open); assertTrue(back.reservedRecheck)
+        assertEquals(10_000.0, back.baseKm!!, 0.0) // 기준점은 그대로
+    }
+
+    @Test fun quest_later_reopensAt500kmOr14Days_whicheverFirst() {
+        val d = day0.toEpochDay()
+        val s = withSetup(10_000.0, d)
+        val (a, _) = Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.LATER, 20_000.0, d + 1)!!
+        assertFalse(Maintenance.status(QuestDef.ENGINE_OIL, a, 20_499.0, d + 2)!!.open)
+        assertTrue(Maintenance.status(QuestDef.ENGINE_OIL, a, 20_500.0, d + 2)!!.open) // km 먼저
+        assertTrue(Maintenance.status(QuestDef.ENGINE_OIL, a, 20_010.0, d + 1 + Maintenance.LATER_DAYS)!!.open) // 날짜 먼저
+        assertFalse(Maintenance.status(QuestDef.ENGINE_OIL, a, 20_010.0, d + Maintenance.LATER_DAYS)!!.open)
+        // 주행거리를 모를 때는 날짜로만
+        assertFalse(Maintenance.status(QuestDef.ENGINE_OIL, a, null, d + 2)!!.open)
+    }
+
+    @Test fun quest_done_withServiceKm_givesMemorial_andUsesThatBase() {
+        val d = day0.toEpochDay()
+        val s = withSetup(10_000.0, d)
+        val (a, rw) = Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, 20_300.0, d + 3, serviceKm = 20_050.0)!!
+        assertEquals(setOf(MaterialKind.GEAR, MaterialKind.MEMORIAL), rw.map { it.kind }.toSet())
+        assertEquals(20_050.0, Maintenance.status(QuestDef.ENGINE_OIL, a, 20_300.0, d + 3)!!.baseKm!!, 0.0)
+        // 현재 주행거리보다 큰 값·음수·비정상 값, '했어요' 외 응답의 입력은 거부
+        for (bad in listOf(20_301.0, -1.0, Double.NaN)) assertNull(Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, 20_300.0, d + 3, bad))
+        assertNull(Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.LATER, 20_300.0, d + 3, 20_000.0))
+        assertTrue(rw.none { it.tag.contains("확인") })
+        assertTrue(StateValidator.isValid(a))
     }
 
     @Test fun setup_resave_keepsCheckInBaseDay() {
@@ -311,7 +445,7 @@ class VillageCoreTest {
         val (n, r) = settle(started(), 1003.0, at(0), GearState.NOT_PARK)
         assertNull((r as SceneResult.Scene).missionDone)
         assertTrue(n.missions.stamps.isEmpty())
-        assertEquals(SceneLedger.MATERIALS_PER_DAY, n.materials.size)
+        assertEquals(1, j(n.materials))
     }
 
     // ── 꾸미기 ──
@@ -328,6 +462,26 @@ class VillageCoreTest {
         val p2 = Decoration.place(p1, m2.id, 1, today)!!
         assertEquals(m2.kind, Decoration.placedToday(p2, today)!!.kind)
         assertTrue(StateValidator.isValid(p2))
+    }
+
+    /** 0.1.0 저장 파일(하루 재료 2개, 새 필드 없음)을 손상으로 보지 않고 이어서 정산한다. */
+    @Test fun legacy_0_1_0_state_loadsAndContinues() {
+        val d = day0.toEpochDay()
+        val file = File(tmp.root, "legacy.json")
+        val m = { id: String -> """{"id":"$id","kind":"WOOD","epochDay":$d,"eventId":"scene-1","tag":"t"}""" }
+        file.writeText(
+            """{"version":1,"ledger":{"baselineKm":1010.0,"lastSettledAtMillis":${at(0)},"sceneCount":1,"sceneKm":10.0,"lastMaterialEpochDay":$d,""" +
+                """"scenes":[{"eventId":"scene-1","epochDay":$d,"atMillis":${at(0)},"deltaKm":10.0,"materialIds":["m-scene-1-0","m-scene-1-1"]}]},""" +
+                """"materials":[${m("m-scene-1-0")},${m("m-scene-1-1")}],"village":{"foundedEpochDay":$d},""" +
+                """"maintenance":{"records":{"engine-oil":{"baseKm":1000.0,"baseEpochDay":$d,"completions":1}},"workshopLevel":1,""" +
+                """"setup":{"presetId":"custom","lastServiceKm":1000.0,"lastServiceEpochDay":$d,"oilKm":10000,"oilMonths":12,"setupEpochDay":$d}}}""",
+        )
+        val loaded = FileStateStore(file).load()
+        assertEquals(2, loaded.materials.size)
+        val (n, r) = settle(loaded, 1030.0, at(1))
+        assertEquals(1, j((r as SceneResult.Scene).newMaterials))
+        FileStateStore(file).save(n)
+        assertEquals(n, FileStateStore(file).load())
     }
 
     // ── 탑승·하차 한 문장 각 1회 ──
