@@ -133,7 +133,7 @@ class SafetyAndStoreTest {
             s = SceneLedger.settle(s, OdometerReading.Km(1.0 + i * 3.0), GearState.PARK, t, zone).first
             s.ledger.scenes.lastOrNull()?.let { sc -> s = SceneLedger.setTag(s, sc.eventId, SceneLedger.TAG_PRESETS[i % SceneLedger.TAG_PRESETS.size]) ?: s }
             s.materials.firstOrNull { it.placedSlot == null }?.let { m -> s = Decoration.place(s, m.id, i % Decoration.SLOT_COUNT, day) ?: s }
-            for (q in QuestDef.entries) s = Maintenance.respond(s, q, QuestResponse.entries[i % 3], 1.0 + i * 3.0, day, if (i % 5 == 0) i * 3.0 else null)?.first ?: s
+            for (q in QuestDef.entries) s = Maintenance.respond(s, q, if (i % 4 == 3) QuestResponse.DONE else QuestResponse.LATER, 1.0 + i * 3.0, day, null, if (i % 4 == 3) day else null)?.first ?: s
         }
         assertTrue(StateValidator.isValid(s))
         assertTrue(s.maintenance.workshopLevel > 0)

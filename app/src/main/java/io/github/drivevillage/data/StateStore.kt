@@ -149,10 +149,12 @@ object StateValidator {
                 setup.oilMonths in Maintenance.MIN_MONTHS..Maintenance.MAX_MONTHS)) &&
             s.maintenance.records.values.all {
                 it.completions >= 0 && it.cycle >= 0 && (it.rewardedCycle == null || it.rewardedCycle in 0..it.cycle) &&
-                    (it.baseKm == null || finiteNonNeg(it.baseKm)) && (it.snoozeUntilKm == null || finiteNonNeg(it.snoozeUntilKm))
+                    (it.baseKm == null || finiteNonNeg(it.baseKm)) && (it.snoozeUntilKm == null || finiteNonNeg(it.snoozeUntilKm)) &&
+                    (it.rewardAnchorKm == null || finiteNonNeg(it.rewardAnchorKm))
             } &&
             // 앞으로 퀘스트·미션·태그 문구가 바뀌어도 이전 이력을 손상으로 보지 않도록, 모르는 id·문구는 허용한다(표시만 건너뜀).
-            s.maintenance.records.values.sumOf { it.completions } <= s.maintenance.workshopLevel &&
+            // 공방 증축은 보상 조건을 만족한 '했어요'에서만 오르므로 완료 수와 같지 않을 수 있다.
+            s.maintenance.workshopLevel >= 0 &&
             (s.maintenance.records.isEmpty() || setup != null)
     }
 }

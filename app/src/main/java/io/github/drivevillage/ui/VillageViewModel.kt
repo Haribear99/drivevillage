@@ -246,9 +246,9 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun saveSetup(preset: CarPreset, lastKm: Double, lastDay: Long, oilKm: Int, oilMonths: Int) {
+    fun saveSetup(preset: CarPreset, lastKm: Double, lastDay: Long, oilKm: Int, oilMonths: Int, unknown: Boolean = false) {
         if (!inVillage()) return
-        val setup = Maintenance.newSetup(preset, lastKm, lastDay, oilKm, oilMonths, today())
+        val setup = Maintenance.newSetup(preset, lastKm, lastDay, oilKm, oilMonths, today(), lastServiceUnknown = unknown)
         if (setup == null) { _notice.value = "입력값을 확인해 주세요(미래 날짜·범위 밖 값은 저장하지 않아요)."; return }
         viewModelScope.launch {
             _notice.value = if (update { Maintenance.saveSetup(it, setup) }) "정비 공방 설정을 저장했어요." else SAVE_FAIL
@@ -259,26 +259,26 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
      * 정비 퀘스트 응답: 했어요 / 예약했어요 / 다음에. 무엇이든 같은 작은 보상(주기마다 1회).
      * [serviceKm]은 '했어요'에서 정비 당시 주행거리를 직접 넣었을 때만(기념 장식 +1).
      */
-    fun respondQuest(def: QuestDef, response: QuestResponse, serviceKm: Double? = null) {
+    fun respondQuest(def: QuestDef, response: QuestResponse, serviceKm: Double? = null, serviceDay: Long? = null) {
         if (!inVillage()) return
         val today = today()
         val odo = currentOdo()
         viewModelScope.launch {
             val r = repo.mutate { cur ->
-                val out = Maintenance.respond(cur, def, response, odo, today, serviceKm)
+                val out = Maintenance.respond(cur, def, response, odo, today, serviceKm, serviceDay)
                 (out?.first ?: cur) to out?.second
             }
             val rewards = r.value
             if (!r.saved || rewards == null) {
-                _notice.value = if (!r.saved) SAVE_FAIL else "지금 응답할 수 있는 부탁이 아니에요."
+                _notice.value = if (!r.saved) SAVE_FAIL else "기록하지 못했어요. 정비 시점은 현재 주행거리 이하·직전 기준 이후, 날짜는 오늘 이전이어야 해요."
                 return@launch
             }
             val what = when (response) {
-                QuestResponse.DONE -> "「${def.title}」 했어요로 기록했어요. 공방이 한 칸 늘었어요."
+                QuestResponse.DONE -> "「${def.title}」 했어요로 기록했어요." + if (rewards.isNotEmpty()) " 공방이 한 칸 늘었어요." else ""
                 QuestResponse.RESERVED -> "「${def.title}」 예약했어요로 기록했어요. ${Maintenance.RESERVE_RECHECK_DAYS}일 뒤에 다시 여쭐게요."
                 QuestResponse.LATER -> "「${def.title}」 다음에로 기록했어요. ${Maintenance.LATER_KM.toInt()}km 또는 ${Maintenance.LATER_DAYS}일 중 먼저 오는 때에 다시 알려 드려요."
             }
-            val got = if (rewards.isEmpty()) " 이번 주기의 응답 보상은 이미 받았어요." else " 받은 것: " + rewards.joinToString(", ") { it.kind.label }
+            val got = if (rewards.isEmpty()) " 응답 보상은 지난 보상 뒤 한 주기가 지나면 다시 드려요." else " 받은 것: " + rewards.joinToString(", ") { it.kind.label }
             _notice.value = what + got
             _bubble.value = Bubble(Resident.CRAFTSMAN, lines.line(Resident.CRAFTSMAN, LineContext.WORKSHOP, summary(null, 0), state.value.maintenance.workshopLevel + rewards.size))
         }

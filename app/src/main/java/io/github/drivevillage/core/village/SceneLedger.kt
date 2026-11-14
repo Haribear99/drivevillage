@@ -224,24 +224,28 @@ object SceneLedger {
     }
 }
 
-/** 조연 미션. normal 신호(기어·주행거리)로만 판정한다. 과속·점수·연속일수·페널티 없음. */
+/**
+ * 조연 미션. normal 신호(기어)로만 판정한다. 과속·점수·연속일수·페널티 없음.
+ * 0.1.2에서 「짧은 이동도 기록하기」(정산 대비 5km 미만)를 없앴다: 짧게 자주 열수록 받는 구조라 정산 리듬과 충돌.
+ */
 enum class MissionDef(val id: String, val title: String, val detail: String) {
     PARK_AFTER_DRIVE("park-after-drive", "주행 후 P단으로 정차하기", "달린 뒤 기어를 P에 두고 마을을 열면 완료(기어 신호)"),
-    SHORT_TRIP("short-trip", "짧은 이동도 기록하기", "5km 미만의 짧은 이동도 마을에 남기면 완료(주행거리)"),
 }
 
 object Missions {
-    const val SHORT_TRIP_MAX_KM = 5.0
+    /** 이전 버전 저장 파일에 남은, 지금은 없는 미션의 표시 이름. */
+    private val RETIRED_TITLES = mapOf("short-trip" to "짧은 이동도 기록하기(이전 미션)")
 
     /** 날짜로 정해지는 오늘의 미션 1개(무작위 아님). */
     fun today(epochDay: Long): MissionDef = MissionDef.entries[Math.floorMod(epochDay, MissionDef.entries.size.toLong()).toInt()]
 
     fun judge(mission: MissionDef, deltaKm: Double, gear: GearState): Boolean = when (mission) {
         MissionDef.PARK_AFTER_DRIVE -> gear == GearState.PARK && deltaKm >= SceneLedger.MIN_SCENE_KM
-        MissionDef.SHORT_TRIP -> gear == GearState.PARK && deltaKm >= SceneLedger.MIN_SCENE_KM && deltaKm < SHORT_TRIP_MAX_KM
     }
 
     fun byId(id: String): MissionDef? = MissionDef.entries.firstOrNull { it.id == id }
+
+    fun titleOf(id: String): String = byId(id)?.title ?: RETIRED_TITLES[id] ?: "이전 미션"
 }
 
 /** 마을 꾸미기: 재료 1개를 빈 슬롯에 놓는다(P단 화면에서만 호출). */

@@ -52,6 +52,7 @@ import kotlin.math.roundToLong
 
 private enum class Tab(val label: String) { SCENE("여정 정산"), WORKSHOP("정비 공방"), MISSION("미션"), DECORATE("꾸미기") }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun VillageScreen(vm: VillageViewModel) {
     val state by vm.state.collectAsState()
@@ -69,9 +70,9 @@ fun VillageScreen(vm: VillageViewModel) {
     val today = vm.today()
     val timeSlot = SceneLedger.slotOf(now, java.time.ZoneId.systemDefault())
 
-    Row(Modifier.fillMaxSize()) {
-        // ── 왼쪽: 마을 전경 ──
-        BoxWithConstraints(Modifier.weight(1.25f).fillMaxHeight()) {
+    // ── 마을 전경 ──
+    val villagePane: @Composable (Modifier) -> Unit = { paneModifier ->
+        BoxWithConstraints(paneModifier) {
             VillageCanvas(
                 modifier = Modifier.fillMaxSize(),
                 timeSlot = timeSlot,
@@ -129,9 +130,11 @@ fun VillageScreen(vm: VillageViewModel) {
                 )
             }
         }
-        // ── 오른쪽: 패널 ──
-        Column(Modifier.weight(1f).fillMaxHeight().background(VillageTheme.panel).padding(12.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    }
+    // ── 패널 ──
+    val panelPane: @Composable (Modifier) -> Unit = { paneModifier ->
+        Column(paneModifier.background(VillageTheme.panel).padding(12.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 Tab.entries.forEach { t ->
                     if (t == tab) Button(onClick = { tab = t }) { Text(t.label, fontSize = 13.sp) }
                     else OutlinedButton(onClick = { tab = t }) { Text(t.label, fontSize = 13.sp) }
@@ -154,6 +157,20 @@ fun VillageScreen(vm: VillageViewModel) {
                     Tab.MISSION -> MissionPanel(state, today)
                     Tab.DECORATE -> DecoratePanel(state, selectedMaterial) { selectedMaterial = it }
                 }
+            }
+        }
+    }
+    // Pleos 1창(세로)에서는 위아래로, 2창(가로)에서는 좌우로 놓는다. 방향은 강제하지 않는다.
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        if (maxHeight > maxWidth) {
+            Column(Modifier.fillMaxSize()) {
+                villagePane(Modifier.weight(1f).fillMaxWidth())
+                panelPane(Modifier.weight(1.3f).fillMaxWidth())
+            }
+        } else {
+            Row(Modifier.fillMaxSize()) {
+                villagePane(Modifier.weight(1.25f).fillMaxHeight())
+                panelPane(Modifier.weight(1f).fillMaxHeight())
             }
         }
     }
@@ -261,7 +278,8 @@ private fun WorkshopPanel(vm: VillageViewModel, state: AppState, odo: Double?, t
     Card {
         Title("정비 공방 · ${state.maintenance.workshopLevel}단계")
         Body("주행거리와 날짜 중 먼저 도래하는 쪽으로 부탁이 열려요. 답은 직접 하는 기록이에요(앱은 정비 여부를 알 수 없어요).", VillageTheme.subtext, 13)
-        Body("했어요·예약했어요·다음에 중 무엇을 눌러도 공방 톱니 1개(부탁 한 주기에 한 번). '했어요'에 정비 당시 주행거리를 넣으면 기념패 1개를 더 드려요.", VillageTheme.subtext, 12)
+        Body("했어요·예약했어요·다음에 중 무엇을 눌러도 같은 공방 톱니 1개(부탁 한 주기에 한 번).", VillageTheme.subtext, 12)
+        Body("정비한 날·거리를 남기면 공방이 커져요(선택). 기념패도 하나 드려요.", Color(0xFF9FE0A8), 12)
         if (currentOdo == null) Body("주행거리를 확인하지 못해 지금은 날짜 기준만 봐요.", Color(0xFFFFB4A8), 13)
     }
     val statuses = Maintenance.all(state, currentOdo, today).sortedBy { if (it.open) 0 else 1 }
@@ -274,20 +292,31 @@ private fun WorkshopPanel(vm: VillageViewModel, state: AppState, odo: Double?, t
 private fun QuestCard(vm: VillageViewModel, st: QuestStatus, currentOdo: Double?) {
     var doneOpen by remember(st.def, st.open) { mutableStateOf(false) }
     var serviceKm by remember(st.def, doneOpen) { mutableStateOf(currentOdo ?: 0.0) }
+    val today = vm.today()
+    var serviceDay by remember(st.def, doneOpen) { mutableStateOf(today) }
+    val minKm = st.baseKm ?: 0.0
+    val minDay = st.baseEpochDay?.takeIf { it <= today } ?: (today - 730)
     Card {
         Text(st.def.title, color = if (st.open) VillageTheme.accent else VillageTheme.text, fontWeight = FontWeight.Bold, fontSize = 15.sp)
         when {
             st.open -> {
-                Body(if (st.reservedRecheck) "도담: 예약한 정비는 다녀오셨나요?" else "도담의 부탁: ${st.def.request}", size = 13)
+                Body(
+                    when {
+                        st.reservedRecheck -> "도담: 예약한 정비는 다녀오셨나요?"
+                        st.baseUnconfirmed -> "점검해 보세요(기준 미확인). 마지막 정비 시점을 모르니 지금 한 번 봐 주세요."
+                        else -> "도담의 부탁: ${st.def.request}"
+                    }, size = 13,
+                )
                 Body(
                     when (st.dueBy) {
                         DueBy.KM -> "주행거리 쪽이 먼저 도래했어요"
                         DueBy.DATE -> "날짜 쪽이 먼저 도래했어요"
                         DueBy.BOTH -> "주행거리·날짜 모두 도래했어요"
+                        DueBy.UNCONFIRMED -> "기준 미확인: 날짜 주기로만 안내해요"
                         null -> ""
                     }, Color(0xFFFFD58A), 12,
                 )
-                if (!st.rewardAvailable) Body("이번 주기의 응답 보상은 이미 받았어요.", VillageTheme.subtext, 12)
+                if (!st.rewardAvailable) Body("응답 보상은 지난 보상 뒤 한 주기가 지나야 다시 받아요.", VillageTheme.subtext, 12)
                 if (!doneOpen) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         Button(onClick = { doneOpen = true }) { Text(QuestResponse.DONE.label, fontSize = 12.sp) }
@@ -295,16 +324,20 @@ private fun QuestCard(vm: VillageViewModel, st: QuestStatus, currentOdo: Double?
                         OutlinedButton(onClick = { vm.respondQuest(st.def, QuestResponse.LATER) }) { Text(QuestResponse.LATER.label, fontSize = 12.sp) }
                     }
                 } else {
+                    Body("정비한 날을 넣으면 다음 안내가 정확해져요. 정비한 날·거리를 남기면 공방이 커져요(선택).", Color(0xFF9FE0A8), 13)
+                    Stepper("정비한 날", "${java.time.LocalDate.ofEpochDay(serviceDay)}", listOf("-1달" to -30.0, "-1일" to -1.0, "+1일" to 1.0)) {
+                        serviceDay = (serviceDay + it.toLong()).coerceIn(minDay, today)
+                    }
                     if (currentOdo != null) {
-                        Stepper("정비 당시 주행거리(선택, 기념패에 기록)", "${serviceKm.roundToLong()}km", listOf("-1000" to -1000.0, "-100" to -100.0, "+100" to 100.0)) {
-                            serviceKm = (serviceKm + it).coerceIn(0.0, currentOdo)
+                        Stepper("정비 당시 주행거리", "${serviceKm.roundToLong()}km", listOf("-1000" to -1000.0, "-100" to -100.0, "+100" to 100.0)) {
+                            serviceKm = (serviceKm + it).coerceIn(minOf(minKm, currentOdo), currentOdo)
                         }
                     }
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        if (currentOdo != null) {
-                            Button(onClick = { vm.respondQuest(st.def, QuestResponse.DONE, serviceKm) }) { Text("이 주행거리로 기록(+기념패)", fontSize = 12.sp) }
+                        Button(onClick = { vm.respondQuest(st.def, QuestResponse.DONE, if (currentOdo != null) serviceKm else null, serviceDay) }) {
+                            Text("이 정비 시점으로 기록(+기념패)", fontSize = 12.sp)
                         }
-                        OutlinedButton(onClick = { vm.respondQuest(st.def, QuestResponse.DONE) }) { Text("주행거리 없이 기록", fontSize = 12.sp) }
+                        OutlinedButton(onClick = { vm.respondQuest(st.def, QuestResponse.DONE) }) { Text("지금으로 기록", fontSize = 12.sp) }
                         TextButton(onClick = { doneOpen = false }) { Text("취소", fontSize = 12.sp) }
                     }
                 }
@@ -332,6 +365,7 @@ private fun SetupForm(vm: VillageViewModel, state: AppState, odo: Double?, today
     var preset by remember { mutableStateOf(prev?.presetId?.let { io.github.drivevillage.core.village.CarPreset.byId(it) } ?: io.github.drivevillage.core.village.CarPreset.SONATA_HEV) }
     var lastKm by remember { mutableStateOf(prev?.lastServiceKm ?: (odo ?: state.ledger.baselineKm ?: 0.0)) }
     var lastDay by remember { mutableStateOf(prev?.lastServiceEpochDay ?: today) }
+    var unknown by remember { mutableStateOf(prev?.lastServiceUnknown ?: false) }
     var oilKm by remember { mutableStateOf(prev?.oilKm ?: preset.oilKm) }
     var oilMonths by remember { mutableStateOf(prev?.oilMonths ?: preset.oilMonths) }
     Card {
@@ -346,8 +380,16 @@ private fun SetupForm(vm: VillageViewModel, state: AppState, odo: Double?, today
         }
         Body("출처: ${preset.source}", VillageTheme.subtext, 11)
         if (odo == null && prev == null) Body("주행거리를 읽지 못해 0km에서 시작해요. 계기판 값을 보고 맞춰 주세요.", Color(0xFFFFB4A8), 12)
-        Stepper("마지막 정비 주행거리", "${lastKm.roundToLong()}km", listOf("-10000" to -10_000.0, "-1000" to -1000.0, "-100" to -100.0, "+100" to 100.0, "+1000" to 1000.0, "+10000" to 10_000.0)) { lastKm = (lastKm + it).coerceAtLeast(0.0) }
-        Stepper("마지막 정비 날짜", "${java.time.LocalDate.ofEpochDay(lastDay)}", listOf("-1달" to -30.0, "-1일" to -1.0, "+1일" to 1.0, "+1달" to 30.0)) { lastDay = (lastDay + it.toLong()).coerceAtMost(today) }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (!unknown) Button(onClick = {}) { Text("마지막 정비 시점 입력", fontSize = 12.sp) } else OutlinedButton(onClick = { unknown = false }) { Text("마지막 정비 시점 입력", fontSize = 12.sp) }
+            if (unknown) Button(onClick = {}) { Text("모름", fontSize = 12.sp) } else OutlinedButton(onClick = { unknown = true }) { Text("모름", fontSize = 12.sp) }
+        }
+        if (unknown) {
+            Body("모름으로 두면 정비 항목은 '기준 미확인'이 돼요. 설치한 날을 정비한 날로 치지 않고, 날짜 주기로만 '점검해 보세요'를 안내해요. 정비 후 '했어요'로 정비한 날을 넣으면 그때부터 정확해져요.", VillageTheme.subtext, 12)
+        } else {
+            Stepper("마지막 정비 주행거리", "${lastKm.roundToLong()}km", listOf("-10000" to -10_000.0, "-1000" to -1000.0, "-100" to -100.0, "+100" to 100.0, "+1000" to 1000.0, "+10000" to 10_000.0)) { lastKm = (lastKm + it).coerceAtLeast(0.0) }
+            Stepper("마지막 정비 날짜", "${java.time.LocalDate.ofEpochDay(lastDay)}", listOf("-1달" to -30.0, "-1일" to -1.0, "+1일" to 1.0, "+1달" to 30.0)) { lastDay = (lastDay + it.toLong()).coerceAtMost(today) }
+        }
         Stepper("엔진오일 주기(km, 가정값)", "${oilKm}km", listOf("-500" to -500.0, "+500" to 500.0)) {
             oilKm = (oilKm + it.toInt()).coerceIn(Maintenance.MIN_OIL_KM, Maintenance.MAX_OIL_KM)
         }
@@ -355,7 +397,7 @@ private fun SetupForm(vm: VillageViewModel, state: AppState, odo: Double?, today
             oilMonths = (oilMonths + it.toInt()).coerceIn(Maintenance.MIN_MONTHS, Maintenance.MAX_MONTHS)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { vm.saveSetup(preset, lastKm, lastDay, oilKm, oilMonths); onDone() }) { Text("저장", fontSize = 13.sp) }
+            Button(onClick = { vm.saveSetup(preset, lastKm, lastDay, oilKm, oilMonths, unknown); onDone() }) { Text("저장", fontSize = 13.sp) }
             if (prev != null) OutlinedButton(onClick = onDone) { Text("취소", fontSize = 13.sp) }
         }
     }
@@ -377,7 +419,7 @@ private fun MissionPanel(state: AppState, today: Long) {
     val mission = Missions.today(today)
     val done = state.missions.stamps.firstOrNull { it.epochDay == today }
     Card {
-        Title("오늘의 미션(조연)")
+        Title("미션(조연)")
         Text(mission.title, color = VillageTheme.text, fontWeight = FontWeight.Bold, fontSize = 15.sp)
         Body(mission.detail, VillageTheme.subtext, 13)
         Body(if (done != null) "오늘의 도장을 받았어요." else "주행 후 P단에서 마을을 열면 한 번 판정해요.", if (done != null) Color(0xFF9FE0A8) else VillageTheme.subtext, 13)
@@ -387,7 +429,7 @@ private fun MissionPanel(state: AppState, today: Long) {
     if (stamps.isNotEmpty()) {
         Title("모은 도장")
         stamps.forEach { s ->
-            Body("${SceneLedger.dateLabel(s.epochDay)} · ${Missions.byId(s.missionId)?.title ?: s.missionId}", VillageTheme.subtext, 13)
+            Body("${SceneLedger.dateLabel(s.epochDay)} · ${Missions.titleOf(s.missionId)}", VillageTheme.subtext, 13)
         }
     }
 }

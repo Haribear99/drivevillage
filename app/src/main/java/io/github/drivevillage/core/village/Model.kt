@@ -103,11 +103,13 @@ data class MaintenanceSetup(
     val oilMonths: Int,
     /** 설정한 날. 월 1회 체크인류의 기준일. */
     val setupEpochDay: Long,
+    /** 온보딩에서 '모름'을 고름: 정비 항목의 기준을 '미확인'으로 둔다(설치 시점을 정비 시점으로 보지 않음). */
+    val lastServiceUnknown: Boolean = false,
 )
 
 @Serializable
 data class QuestRecord(
-    /** 기준 주행거리('했어요' 때의 값). 읽지 못했으면 null(그 주기는 날짜만으로 연다). */
+    /** 다음 주기 계산 기준 주행거리('했어요'에서 입력한 정비 당시 값, 없으면 신고 당시 값). 모르면 null(날짜로만). */
     val baseKm: Double?,
     val baseEpochDay: Long,
     /** '했어요' 누적 수(= 공방 증축에 반영). */
@@ -122,6 +124,9 @@ data class QuestRecord(
     val snoozeUntilKm: Double? = null,
     /** '예약했어요'로 미룬 경우 재확인 문구를 보인다. */
     val reservedRecheck: Boolean = false,
+    /** 마지막으로 응답 보상을 준 때의 주행거리·날짜(보상 중복 방지 기준, 정비 이력과 별개). */
+    val rewardAnchorKm: Double? = null,
+    val rewardAnchorDay: Long? = null,
 )
 
 @Serializable
