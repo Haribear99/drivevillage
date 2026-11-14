@@ -49,13 +49,16 @@ object SceneLedger {
     const val HISTORY_LIMIT = 60
     /** 역전 확정 때 두 판독 사이에 인정하는 최대 주행거리(가정값). */
     const val MAX_KM_BETWEEN_READS = 1_500.0
+    /** 시계 하한: 0.1.0 빌드 무렵(2026-11-01). 이보다 이른 기기 날짜는 믿지 않는다. */
+    val CLOCK_FLOOR_EPOCH_DAY: Long = LocalDate.of(2026, 11, 1).toEpochDay()
 
     val TAG_PRESETS = listOf("잠깐 쉬었어요", "친구를 만났어요", "그냥 출근길", "멀리 다녀왔어요", "장 보고 왔어요")
 
     fun settle(state: AppState, reading: OdometerReading, gear: GearState, nowMillis: Long, zone: ZoneId): Pair<AppState, SceneResult> {
         val today = epochDay(nowMillis, zone)
-        // 마을을 시작한 날보다 이른 날짜는 시계 불명(부팅 직후 RTC 초기값 등)으로 보고 아무것도 바꾸지 않는다.
-        state.village.foundedEpochDay?.let { if (today < it) return state to SceneResult.Held("clock-invalid") }
+        // 이 버전이 나오기 전 날짜는 시계 불명(부팅 직후 RTC 초기값 등)으로 보고 아무것도 바꾸지 않는다.
+        // (마을 시작일을 하한으로 쓰면 첫 실행 때 시계가 앞서 있던 경우 영구히 막힌다.)
+        if (today < CLOCK_FLOOR_EPOCH_DAY) return state to SceneResult.Held("clock-invalid")
         val founded = foundIfNeeded(state, today)
         val ledger = founded.ledger
         val km = when (reading) {
@@ -153,8 +156,11 @@ object SceneLedger {
         else -> TimeSlot.NIGHT
     }
 
-    private fun foundIfNeeded(state: AppState, today: Long): AppState =
-        if (state.village.foundedEpochDay != null) state else state.copy(village = state.village.copy(foundedEpochDay = today))
+    /** 마을 시작일 기록. 시계가 앞서 있던 날 시작했다면 이후 더 이른 정상 날짜로 내려 잡는다. */
+    private fun foundIfNeeded(state: AppState, today: Long): AppState {
+        val f = state.village.foundedEpochDay
+        return if (f != null && f <= today) state else state.copy(village = state.village.copy(foundedEpochDay = today))
+    }
 }
 
 /** 조연 미션. normal 신호(기어·주행거리)로만 판정한다. 과속·점수·연속일수·페널티 없음. */

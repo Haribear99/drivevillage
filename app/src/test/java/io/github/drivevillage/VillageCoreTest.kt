@@ -152,6 +152,18 @@ class VillageCoreTest {
         assertEquals(a.materials, h2.materials)
     }
 
+    /** 첫 실행 때 시계가 앞서 있었어도, 정상 날짜로 돌아오면 정산·지급이 이어지고 시작일이 보정된다. */
+    @Test fun firstRunWithClockAhead_recoversAfterClockFix() {
+        var s = settle(AppState(), 1000.0, at(400)).first
+        for (d in 1L..5L) {
+            val (n, r) = settle(s, 1000.0 + d * 12, at(d))
+            assertEquals("day $d", SceneLedger.MATERIALS_PER_DAY, (r as SceneResult.Scene).newMaterials.size)
+            s = n
+        }
+        assertEquals(day0.plusDays(1).toEpochDay(), s.village.foundedEpochDay)
+        assertTrue(StateValidator.isValid(s))
+    }
+
     /** 서로 다른 오류값 두 번(100 → 200)은 역전으로 확정하지 않는다. */
     @Test fun twoDifferentGlitchValues_doNotConfirmReversal() {
         val s0 = settle(started(50_000.0), 50_010.0, at(0)).first

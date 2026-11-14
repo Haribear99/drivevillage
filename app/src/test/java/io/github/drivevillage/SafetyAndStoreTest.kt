@@ -121,19 +121,22 @@ class SafetyAndStoreTest {
     /** 실제 정산을 많이 거친 상태(태그·꾸미기·정비 신고 포함)는 검증을 통과하고 그대로 저장·로드된다. */
     @Test fun store_acceptsRealHistory() {
         val zone = java.time.ZoneId.of("Asia/Seoul")
-        var s = SceneLedger.settle(AppState(), OdometerReading.Km(0.0), GearState.PARK, 0, zone).first
-        s = Maintenance.saveSetup(s, Maintenance.newSetup(CarPreset.TUCSON_GAS, 0.0, 0, 10_000, 12, 0)!!)
-        var t = 0L
+        val base = java.time.LocalDate.of(2026, 11, 15).atTime(9, 0).atZone(zone).toInstant().toEpochMilli()
+        val baseDay = SceneLedger.epochDay(base, zone)
+        var s = SceneLedger.settle(AppState(), OdometerReading.Km(1.0), GearState.PARK, base, zone).first
+        s = Maintenance.saveSetup(s, Maintenance.newSetup(CarPreset.TUCSON_GAS, 0.0, baseDay, 10_000, 12, baseDay)!!)
+        var t = base
         for (i in 1..400) {
             t += 6L * 60 * 60 * 1000
             val day = SceneLedger.epochDay(t, zone)
-            s = SceneLedger.settle(s, OdometerReading.Km(i * 3.0), GearState.PARK, t, zone).first
+            s = SceneLedger.settle(s, OdometerReading.Km(1.0 + i * 3.0), GearState.PARK, t, zone).first
             s.ledger.scenes.lastOrNull()?.let { sc -> s = SceneLedger.setTag(s, sc.eventId, SceneLedger.TAG_PRESETS[i % SceneLedger.TAG_PRESETS.size]) ?: s }
             s.materials.firstOrNull { it.placedSlot == null }?.let { m -> s = Decoration.place(s, m.id, i % Decoration.SLOT_COUNT, day) ?: s }
             for (q in QuestDef.entries) s = Maintenance.complete(s, q, i * 3.0, day) ?: s
         }
         assertTrue(StateValidator.isValid(s))
         assertTrue(s.maintenance.workshopLevel > 0)
+        assertTrue(s.ledger.sceneCount >= 300 && s.materials.isNotEmpty())
         val file = File(tmp.root, "state.json")
         FileStateStore(file).save(s)
         assertEquals(s, FileStateStore(file).load())

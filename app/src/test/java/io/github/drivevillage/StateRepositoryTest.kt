@@ -33,10 +33,12 @@ class StateRepositoryTest {
     @get:Rule val tmp = TemporaryFolder()
     private val zone = ZoneId.of("Asia/Seoul")
     private val DAY = 24L * 60 * 60 * 1000
+    /** 2026-11-15 09:00 KST(시계 하한 이후). */
+    private val BASE = java.time.LocalDate.of(2026, 11, 15).atTime(9, 0).atZone(zone).toInstant().toEpochMilli()
 
     private fun seed(file: File): AppState {
-        var s = SceneLedger.settle(AppState(), OdometerReading.Km(0.0), GearState.PARK, 0, zone).first
-        for (i in 1..50) s = SceneLedger.settle(s, OdometerReading.Km(i * 2.0), GearState.PARK, i * DAY, zone).first
+        var s = SceneLedger.settle(AppState(), OdometerReading.Km(1.0), GearState.PARK, BASE, zone).first
+        for (i in 1..50) s = SceneLedger.settle(s, OdometerReading.Km(1.0 + i * 2.0), GearState.PARK, BASE + i * DAY, zone).first
         FileStateStore(file).save(s)
         return s
     }
