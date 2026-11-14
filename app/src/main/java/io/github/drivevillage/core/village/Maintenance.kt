@@ -132,10 +132,18 @@ object Maintenance {
     private fun rewardOk(def: QuestDef, rec: QuestRecord?, setup: MaintenanceSetup, odoKm: Double?, today: Long): Boolean {
         if (rec == null) return true
         if (rec.rewardedCycle == rec.cycle) return false
-        val aDay = rec.rewardAnchorDay ?: return true
+        return anchorPassed(def, setup, rec.rewardAnchorKm, rec.rewardAnchorDay, odoKm, today)
+    }
+
+    /** 증빙 보상(기념패·공방 증축) 가능 여부: 톱니와 독립. 마지막 기념패 시점에서 한 주기가 지나야 다시. */
+    private fun memorialOk(def: QuestDef, rec: QuestRecord?, setup: MaintenanceSetup, odoKm: Double?, today: Long): Boolean =
+        rec == null || anchorPassed(def, setup, rec.memorialAnchorKm, rec.memorialAnchorDay, odoKm, today)
+
+    /** 앵커(마지막 보상 시점)에서 한 주기(km 또는 개월, 먼저 오는 쪽)가 지났는지. 앵커가 없으면 참. */
+    private fun anchorPassed(def: QuestDef, setup: MaintenanceSetup, aKm: Double?, aDay: Long?, odoKm: Double?, today: Long): Boolean {
+        if (aDay == null) return true
         val kmI = def.intervalKm(setup)
         val months = def.intervalMonths(setup)
-        val aKm = rec.rewardAnchorKm
         val byKm = kmI != null && aKm != null && odoKm != null && odoKm >= aKm + kmI
         val byDate = months != null && aDay <= today && today >= LocalDate.ofEpochDay(aDay).plusMonths(months.toLong()).toEpochDay()
         return byKm || byDate || (kmI == null && months == null)
@@ -229,14 +237,20 @@ object Maintenance {
         if (ok) {
             val id = "gear-${def.id}-${rec0.cycle}"
             if (id !in existing) rewards += Material(id, MaterialKind.GEAR, today, eventId, "${SceneLedger.dateLabel(today)} · ${def.title} 응답")
-            if (response == QuestResponse.DONE && (serviceKm != null || serviceDay != null)) {
-                val mid = "memo-${def.id}-${rec0.cycle}"
-                val what = listOfNotNull(serviceDay?.let { SceneLedger.dateLabel(it) }, serviceKm?.let { "${Math.round(it)}km" }).joinToString(" ")
-                if (mid !in existing) rewards += Material(mid, MaterialKind.MEMORIAL, today, eventId, "${SceneLedger.dateLabel(today)} · ${def.title} $what 기록")
+        }
+        // 증빙 보상(기념패 + 공방 증축)은 톱니와 독립: 예약했어요·다음에 뒤의 증빙 '했어요'도 받는다.
+        var memo = false
+        if (response == QuestResponse.DONE && (serviceKm != null || serviceDay != null) && memorialOk(def, rec, setup, odoKm, today)) {
+            val mid = "memo-${def.id}-${rec0.cycle}"
+            val what = listOfNotNull(serviceDay?.let { SceneLedger.dateLabel(it) }, serviceKm?.let { "${Math.round(it)}km" }).joinToString(" ")
+            if (mid !in existing) {
+                rewards += Material(mid, MaterialKind.MEMORIAL, today, eventId, "${SceneLedger.dateLabel(today)} · ${def.title} $what 기록")
+                memo = true
             }
         }
-        // 보상을 준 응답이면 보상 기준점을 지금(신고 당시)으로 옮긴다. 정비 이력과는 별개다.
-        val anchored = if (ok) rec0.copy(rewardedCycle = rec0.cycle, rewardAnchorKm = odoKm, rewardAnchorDay = today) else rec0
+        // 보상을 준 응답이면 해당 보상 기준점을 지금(신고 당시)으로 옮긴다. 정비 이력과는 별개다.
+        val gearAnchored = if (ok) rec0.copy(rewardedCycle = rec0.cycle, rewardAnchorKm = odoKm, rewardAnchorDay = today) else rec0
+        val anchored = if (memo) gearAnchored.copy(memorialAnchorKm = odoKm, memorialAnchorDay = today) else gearAnchored
         val newRec = when (response) {
             QuestResponse.DONE -> anchored.copy(
                 baseKm = serviceKm ?: odoKm, baseEpochDay = serviceDay ?: today, completions = rec0.completions + 1,

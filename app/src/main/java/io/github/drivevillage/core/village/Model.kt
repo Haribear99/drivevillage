@@ -127,6 +127,9 @@ data class QuestRecord(
     /** 마지막으로 응답 보상을 준 때의 주행거리·날짜(보상 중복 방지 기준, 정비 이력과 별개). */
     val rewardAnchorKm: Double? = null,
     val rewardAnchorDay: Long? = null,
+    /** 마지막으로 정비 기념패(증빙 보상)를 준 때의 주행거리·날짜. 톱니 보상과 독립. */
+    val memorialAnchorKm: Double? = null,
+    val memorialAnchorDay: Long? = null,
 )
 
 @Serializable

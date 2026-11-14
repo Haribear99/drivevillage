@@ -538,10 +538,29 @@ class VillageCoreTest {
             assertEquals(setOf(MaterialKind.GEAR, MaterialKind.MEMORIAL), rw.map { it.kind }.toSet())
             assertEquals(1, n.maintenance.workshopLevel)
         }
-        // 보상 조건이 안 되면(같은 주기 이미 보상) 증빙이 있어도 증축 없음
-        val (a, _) = Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.LATER, 16_000.0, d)!!
-        val (b, rw2) = Maintenance.respond(a, QuestDef.ENGINE_OIL, QuestResponse.DONE, 16_100.0, d + Maintenance.LATER_DAYS, 15_000.0, d - 3)!!
-        assertTrue(rw2.isEmpty()); assertEquals(0, b.maintenance.workshopLevel)
+    }
+
+    /** 예약했어요·다음에(톱니) 뒤 증빙 '했어요'도 기념패·증축을 받는다. 같은 주기에 반복하면 0. */
+    @Test fun quest_evidenceAfterSnooze_stillGrowsWorkshop_once() {
+        val d = day0.toEpochDay()
+        for (first in listOf(QuestResponse.LATER, QuestResponse.RESERVED)) {
+            val s = withSetup(10_000.0, d - 10, oilKm = 5_000, months = 12, today = d)
+            val (a, r1) = Maintenance.respond(s, QuestDef.ENGINE_OIL, first, 16_000.0, d)!!
+            assertEquals(listOf(MaterialKind.GEAR), r1.map { it.kind })
+            val back = d + Maintenance.RESERVE_RECHECK_DAYS
+            val (b, r2) = Maintenance.respond(a, QuestDef.ENGINE_OIL, QuestResponse.DONE, 16_100.0, back, 15_000.0, d - 3)!!
+            assertEquals(first.name, listOf(MaterialKind.MEMORIAL), r2.map { it.kind }) // 톱니는 이미 받음
+            assertEquals(first.name, 1, b.maintenance.workshopLevel)
+            // 같은 날 과거 값으로 다시 재도래시켜 증빙 '했어요'를 반복해도 추가 없음
+            var c = b
+            var more = 0
+            for (km in listOf(15_001.0, 15_002.0, 15_003.0)) {
+                Maintenance.respond(c, QuestDef.ENGINE_OIL, QuestResponse.DONE, 16_100.0, back, km, d - 3)?.let { (n, rw) -> c = n; more += rw.size }
+            }
+            assertEquals(first.name, 0, more)
+            assertEquals(first.name, 1, c.maintenance.workshopLevel)
+            assertTrue(StateValidator.isValid(c))
+        }
     }
 
     /** 보상 중복 방지 회귀: 다음에 → 과거 값으로 했어요 → 곧바로 재도래 → 다음에 … 를 반복해도 보상은 한 번. */
@@ -559,8 +578,8 @@ class VillageCoreTest {
             day += 14
         }
         assertEquals(20, responded) // 과거 값 때문에 매번 다시 열려 응답 자체는 계속 받는다
-        assertEquals(1, gearsGot)
-        assertEquals(0, s.maintenance.workshopLevel) // 첫 보상이 '다음에'였으므로 공방 증축 없음
+        assertEquals(2, gearsGot) // 톱니 1(첫 다음에) + 기념패 1(첫 증빙 했어요), 이후 반복은 0
+        assertEquals(1, s.maintenance.workshopLevel) // 증빙 보상 1회만큼만 증축
         // 마지막 보상(40,000km)에서 한 주기(5,000km)가 지나면 다시 보상
         val open = Maintenance.status(QuestDef.ENGINE_OIL, s, 45_000.0, d + 15)!!
         assertTrue(open.rewardAvailable)
