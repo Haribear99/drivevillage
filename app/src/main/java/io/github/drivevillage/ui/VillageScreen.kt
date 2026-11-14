@@ -186,12 +186,19 @@ private fun ScenePanel(vm: VillageViewModel, state: AppState, open: OpenResult, 
         }
         is OpenResult.Held -> Card {
             Title("이번 장면은 보류했어요")
-            Body("주행거리를 확인하지 못했어요(${open.reason}). 기록은 그대로 두고, 다음에 열 때 합쳐서 정산해요.")
+            Body(
+                when (open.reason) {
+                    "save-failed" -> "기록을 저장하지 못했어요. 지급한 것은 없고, 다음에 열 때 다시 정산해요."
+                    "reversed-unconfirmed" -> "주행거리가 이전 기록보다 작게 읽혔어요. 일시적인 값일 수 있어 기준은 그대로 두었어요."
+                    "invalid-value" -> "주행거리 값이 올바르지 않아 이번 정산은 건너뛰었어요."
+                    else -> "주행거리를 확인하지 못했어요. 기록은 그대로 두고, 다음에 열 때 합쳐서 정산해요."
+                },
+            )
         }
         is OpenResult.Scene -> Card {
             val rec = state.ledger.scenes.firstOrNull { it.eventId == open.record.eventId } ?: open.record
             Title("오늘의 장면 · ${SceneLedger.dateLabel(rec.epochDay)}")
-            Body("마지막 기록 이후 ${"%.0f".format(rec.deltaKm)}km 이동", size = 18)
+            Body("마지막 기록 이후 ${kotlin.math.floor(rec.deltaKm).toLong()}km 이동", size = 18)
             if (open.alreadyGotToday) {
                 Body("오늘 재료는 이미 받았어요(하루 1회, 거리와 무관). 이 장면은 일기에 남겨요.", VillageTheme.subtext)
             } else {
@@ -214,7 +221,7 @@ private fun ScenePanel(vm: VillageViewModel, state: AppState, open: OpenResult, 
         Spacer(Modifier.height(8.dp))
         Title("마을 일기")
         diary.forEach { s ->
-            Body("${SceneLedger.dateLabel(s.epochDay)} · ${"%.0f".format(s.deltaKm)}km${s.tag?.let { " · $it" } ?: ""}", VillageTheme.subtext, 13)
+            Body("${SceneLedger.dateLabel(s.epochDay)} · ${kotlin.math.floor(s.deltaKm).toLong()}km${s.tag?.let { " · $it" } ?: ""}", VillageTheme.subtext, 13)
         }
     }
 }
@@ -285,7 +292,8 @@ private fun SetupForm(vm: VillageViewModel, state: AppState, odo: Double?, today
             }
         }
         Body("출처: ${preset.source}", VillageTheme.subtext, 11)
-        Stepper("마지막 정비 주행거리", "${lastKm.roundToLong()}km", listOf("-1000" to -1000.0, "-100" to -100.0, "+100" to 100.0, "+1000" to 1000.0)) { lastKm = (lastKm + it).coerceAtLeast(0.0) }
+        if (odo == null && prev == null) Body("주행거리를 읽지 못해 0km에서 시작해요. 계기판 값을 보고 맞춰 주세요.", Color(0xFFFFB4A8), 12)
+        Stepper("마지막 정비 주행거리", "${lastKm.roundToLong()}km", listOf("-10000" to -10_000.0, "-1000" to -1000.0, "-100" to -100.0, "+100" to 100.0, "+1000" to 1000.0, "+10000" to 10_000.0)) { lastKm = (lastKm + it).coerceAtLeast(0.0) }
         Stepper("마지막 정비 날짜", "${java.time.LocalDate.ofEpochDay(lastDay)}", listOf("-1달" to -30.0, "-1일" to -1.0, "+1일" to 1.0, "+1달" to 30.0)) { lastDay = (lastDay + it.toLong()).coerceAtMost(today) }
         Stepper("엔진오일 주기(km, 가정값)", "${oilKm}km", listOf("-500" to -500.0, "+500" to 500.0)) {
             oilKm = (oilKm + it.toInt()).coerceIn(Maintenance.MIN_OIL_KM, Maintenance.MAX_OIL_KM)
@@ -300,11 +308,12 @@ private fun SetupForm(vm: VillageViewModel, state: AppState, odo: Double?, today
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun Stepper(label: String, value: String, steps: List<Pair<String, Double>>, onStep: (Double) -> Unit) {
     Column(Modifier.padding(vertical = 4.dp)) {
         Text("$label: $value", color = VillageTheme.text, fontSize = 13.sp)
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             steps.forEach { (l, d) -> OutlinedButton(onClick = { onStep(d) }) { Text(l, fontSize = 11.sp) } }
         }
     }

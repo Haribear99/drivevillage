@@ -86,8 +86,11 @@ object Maintenance {
         return MaintenanceSetup(preset.id, lastServiceKm, lastServiceEpochDay, oilKm, oilMonths, today)
     }
 
-    fun saveSetup(state: AppState, setup: MaintenanceSetup): AppState =
-        state.copy(maintenance = state.maintenance.copy(setup = setup))
+    /** 설정 저장. 다시 저장할 때는 처음 설정한 날(체크인 기준일)을 유지한다(열린 체크인이 사라지지 않게). */
+    fun saveSetup(state: AppState, setup: MaintenanceSetup): AppState {
+        val keepDay = state.maintenance.setup?.setupEpochDay ?: setup.setupEpochDay
+        return state.copy(maintenance = state.maintenance.copy(setup = setup.copy(setupEpochDay = keepDay)))
+    }
 
     /** 퀘스트 기준점: 마지막 완료 신고, 없으면 설정(정비 항목은 마지막 정비 시점, 체크인은 설정한 날). */
     private fun base(def: QuestDef, s: MaintenanceState, setup: MaintenanceSetup): QuestRecord =

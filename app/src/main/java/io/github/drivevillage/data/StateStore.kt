@@ -3,8 +3,6 @@ package io.github.drivevillage.data
 import io.github.drivevillage.core.village.AppState
 import io.github.drivevillage.core.village.Decoration
 import io.github.drivevillage.core.village.Maintenance
-import io.github.drivevillage.core.village.MissionDef
-import io.github.drivevillage.core.village.QuestDef
 import io.github.drivevillage.core.village.SceneLedger
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -113,6 +111,7 @@ class FileStateStore(
 /** 로드한 원장의 불변조건. 하나라도 어긋나면 손상으로 본다. */
 object StateValidator {
     private const val EPS = 1e-6
+    private const val MAX_TAG = 40
 
     fun isValid(s: AppState): Boolean {
         val l = s.ledger
@@ -127,7 +126,7 @@ object StateValidator {
             (l.sceneCount == 0 || l.baselineKm != null) &&
             l.sceneKm + EPS >= l.sceneCount * SceneLedger.MIN_SCENE_KM &&     // 장면 1회당 1km 이상
             l.scenes.size <= l.sceneCount &&
-            l.scenes.all { it.deltaKm + EPS >= SceneLedger.MIN_SCENE_KM && (it.tag == null || it.tag in SceneLedger.TAG_PRESETS) } &&
+            l.scenes.all { it.deltaKm + EPS >= SceneLedger.MIN_SCENE_KM && (it.tag == null || (it.tag.isNotBlank() && it.tag.length <= MAX_TAG)) } &&
             l.scenes.map { it.eventId }.toSet().size == l.scenes.size &&
             // 재료: id 중복 없음, 하루 지급량 상한, 지급한 날은 마지막 지급일 이전.
             s.materials.map { it.id }.toSet().size == s.materials.size &&
@@ -138,13 +137,12 @@ object StateValidator {
             slots.all { it in 0 until Decoration.SLOT_COUNT } && slots.toSet().size == slots.size &&
             // 미션: 하루 최대 1개 도장, 아는 미션만.
             s.missions.stamps.map { it.epochDay }.toSet().size == s.missions.stamps.size &&
-            s.missions.stamps.all { st -> MissionDef.entries.any { it.id == st.missionId } } &&
             // 정비: 설정값 범위, 아는 퀘스트만, 완료 수 합 = 공방 단계.
             (setup == null || (finiteNonNeg(setup.lastServiceKm) && setup.oilKm in Maintenance.MIN_OIL_KM..Maintenance.MAX_OIL_KM &&
                 setup.oilMonths in Maintenance.MIN_MONTHS..Maintenance.MAX_MONTHS)) &&
-            s.maintenance.records.keys.all { QuestDef.byId(it) != null } &&
             s.maintenance.records.values.all { it.completions >= 1 && (it.baseKm == null || finiteNonNeg(it.baseKm)) } &&
-            s.maintenance.records.values.sumOf { it.completions } == s.maintenance.workshopLevel &&
+            // 앞으로 퀘스트·미션·태그 문구가 바뀌어도 이전 이력을 손상으로 보지 않도록, 모르는 id·문구는 허용한다(표시만 건너뜀).
+            s.maintenance.records.values.sumOf { it.completions } <= s.maintenance.workshopLevel &&
             (s.maintenance.records.isEmpty() || setup != null)
     }
 }

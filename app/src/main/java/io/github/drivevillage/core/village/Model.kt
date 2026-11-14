@@ -28,6 +28,8 @@ data class LedgerState(
     val sceneKm: Double = 0.0,
     /** 재료를 마지막으로 지급한 날(epochDay). 하루 1회 지급의 근거. */
     val lastMaterialEpochDay: Long? = null,
+    /** 기준값보다 작은 값을 한 번 읽었을 때의 후보. 같은 값이 다음 정산에도 읽혀야 기준값을 바꾼다(일시 오류 방지). */
+    val reversalCandidateKm: Double? = null,
     /** 최근 장면(최대 [SceneLedger.HISTORY_LIMIT]개). */
     val scenes: List<SceneRecord> = emptyList(),
 )

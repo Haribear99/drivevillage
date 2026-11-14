@@ -68,8 +68,8 @@ class SafetyAndStoreTest {
             """{"ledger":{"sceneKm":-1.0}}""",
             """{"ledger":{"sceneCount":-1}}""",
             """{"ledger":{"baselineKm":-5.0}}""",
-            """{"maintenance":{"workshopLevel":3}}""",
-            """{"maintenance":{"records":{"unknown-quest":{"baseKm":1.0,"baseEpochDay":1,"completions":1}},"workshopLevel":1}}""",
+            """{"maintenance":{"workshopLevel":-1}}""",
+            """{"maintenance":{"records":{"engine-oil":{"baseKm":1.0,"baseEpochDay":1,"completions":3}},"workshopLevel":1}}""",
             """{"version":2}""",
         )
         for (c in cases) {
@@ -91,7 +91,7 @@ class SafetyAndStoreTest {
 
     @Test fun store_saveRejectsInvalidState() {
         val file = File(tmp.root, "state.json")
-        val bad = AppState().let { it.copy(maintenance = it.maintenance.copy(workshopLevel = 5)) }
+        val bad = AppState().let { it.copy(ledger = it.ledger.copy(sceneCount = 5)) }
         assertTrue(runCatching { FileStateStore(file).save(bad) }.isFailure)
         assertFalse(file.exists())
     }

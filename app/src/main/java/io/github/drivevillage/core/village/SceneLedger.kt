@@ -20,7 +20,7 @@ sealed interface SceneResult {
     data object Boarding : SceneResult
     /** 읽기 실패: 보류. 기준값·저장 상태 변경 없음. */
     data class Held(val reason: String) : SceneResult
-    /** 값 역전: 기준값만 재설정, 재료 없음. */
+    /** 값 역전이 두 번 연속 확인됨: 기준값만 재설정, 재료 없음. 한 번만 읽힌 역전은 [Held]("reversed-unconfirmed"). */
     data object Reversed : SceneResult
     /** 오늘의 장면(하차). */
     data class Scene(
@@ -58,21 +58,33 @@ object SceneLedger {
             is OdometerReading.Failed -> return founded to SceneResult.Held(reading.reason)
             is OdometerReading.Km -> reading.value
         }
-        if (km.isNaN() || km.isInfinite() || km < 0) return founded to SceneResult.Held("invalid-value")
+        // 0km는 실제 누적 주행거리로 보기 어렵다(초기화·오류 값). 기준값을 건드리지 않고 보류한다.
+        if (km.isNaN() || km.isInfinite() || km <= 0) return founded to SceneResult.Held("invalid-value")
         val baseline = ledger.baselineKm
             ?: return founded.copy(ledger = ledger.copy(baselineKm = km, lastSettledAtMillis = nowMillis)) to SceneResult.FirstMeet
         if (km < baseline) {
-            return founded.copy(ledger = ledger.copy(baselineKm = km, lastSettledAtMillis = nowMillis)) to SceneResult.Reversed
+            // 일시적으로 낮은 값 한 번으로 기준값을 내리면, 다음 정상 값에서 이미 센 거리로 장면이 다시 생긴다.
+            // 같은 낮은 값이 다음 정산에서도 읽힐 때만 기준값을 바꾼다.
+            val confirmed = ledger.reversalCandidateKm?.let { kotlin.math.abs(it - km) < MIN_SCENE_KM } == true
+            return if (confirmed) {
+                founded.copy(ledger = ledger.copy(baselineKm = km, lastSettledAtMillis = nowMillis, reversalCandidateKm = null)) to SceneResult.Reversed
+            } else {
+                founded.copy(ledger = ledger.copy(reversalCandidateKm = km)) to SceneResult.Held("reversed-unconfirmed")
+            }
         }
         val delta = km - baseline
         // 기준값을 바꾸지 않아 1km 미만 증가분이 다음 정산에 합쳐진다.
-        if (delta < MIN_SCENE_KM) return founded to SceneResult.Boarding
+        if (delta < MIN_SCENE_KM) {
+            val cleared = if (ledger.reversalCandidateKm != null) founded.copy(ledger = ledger.copy(reversalCandidateKm = null)) else founded
+            return cleared to SceneResult.Boarding
+        }
 
         val eventId = "scene-${ledger.sceneCount + 1}"
-        val alreadyGot = ledger.lastMaterialEpochDay == today
+        // 시계가 뒤로 간 경우(시간대 변경·RTC 오차)도 '이미 받음'으로 본다. 재료는 지급일이 앞으로만 간다.
+        val alreadyGot = ledger.lastMaterialEpochDay?.let { today <= it } == true
         val newMaterials = if (alreadyGot) emptyList() else (0 until MATERIALS_PER_DAY).map { i ->
             Material(
-                id = "m-$today-$i",
+                id = "m-$eventId-$i",
                 kind = MaterialKind.entries[Math.floorMod(today + i, MaterialKind.entries.size.toLong()).toInt()],
                 epochDay = today,
                 eventId = eventId,
@@ -95,6 +107,7 @@ object SceneLedger {
                 sceneCount = ledger.sceneCount + 1,
                 sceneKm = ledger.sceneKm + delta,
                 lastMaterialEpochDay = if (alreadyGot) ledger.lastMaterialEpochDay else today,
+                reversalCandidateKm = null,
                 scenes = (ledger.scenes + record).takeLast(HISTORY_LIMIT),
             ),
             materials = founded.materials + newMaterials,

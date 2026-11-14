@@ -32,6 +32,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val screen by vm.screen.collectAsState()
             val loaded by vm.stateLoaded.collectAsState()
+            val blocked by vm.writesBlocked.collectAsState()
             LaunchedEffect(screen) { if (screen == Screen.CLOSE) closeWithoutAnimation() }
             VillageTheme {
                 Box(Modifier.fillMaxSize().background(VillageTheme.background)) {
@@ -44,7 +45,16 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier.align(Alignment.Center).padding(24.dp),
                         )
                         // 저장 상태를 다 읽기 전에는 마을 화면을 그리지 않는다(기본값 노출·덮어쓰기 방지).
-                        Screen.VILLAGE -> if (loaded) VillageScreen(vm)
+                        Screen.VILLAGE -> when {
+                            !loaded -> Unit
+                            // 시작할 때 저장 데이터를 확인하지 못했으면 빈 마을을 정상처럼 보여 주지 않는다.
+                            blocked -> Text(
+                                "저장된 마을 데이터를 지금 확인할 수 없어요. 앱을 다시 열어 주세요. 기존 기록은 지우지 않았어요.",
+                                color = Color(0xFFE6E1D6), fontSize = 24.sp,
+                                modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                            )
+                            else -> VillageScreen(vm)
+                        }
                     }
                     Flavor.SimulationOverlay(vm.signals)
                 }

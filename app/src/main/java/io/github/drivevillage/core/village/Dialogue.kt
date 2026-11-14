@@ -25,7 +25,7 @@ data class TripSummary(
     val materialsReceived: Int,
 )
 
-enum class LineContext { BOARDING, SCENE, CHAT }
+enum class LineContext { BOARDING, SCENE, CHAT, WORKSHOP }
 
 /**
  * 대사 생성기 인터페이스. MVP는 [TemplateLineGenerator]만 쓴다.
@@ -77,6 +77,10 @@ object Templates {
         t(G, LineContext.CHAT, "오늘 놓은 {material}, 정원이랑 잘 어울려요."),
         t(G, LineContext.CHAT, "꽃밭 자리가 아직 남아 있어요, 재료가 생기면 하나 놓아 봐요."),
         t(G, LineContext.CHAT, "마을 {day}일째, 새싹이 조금 자랐어요."),
+        // 정비 완료 자기 신고 직후(공방 장인). 신고한 사실만 말하고 차량 상태는 말하지 않는다.
+        t(C, LineContext.WORKSHOP, "신고 고마워요, 공방을 한 칸 늘렸어요."),
+        t(C, LineContext.WORKSHOP, "알려 줘서 고마워요, 공방에 새 기둥을 세웠어요."),
+        t(C, LineContext.WORKSHOP, "마을 {day}일째, 공방이 한 뼘 더 커졌어요."),
     )
 
     /** 어떤 슬롯도 없는 안전한 대체 문장. */
@@ -84,13 +88,14 @@ object Templates {
         LineContext.BOARDING -> "다녀오세요, 마을은 여기서 기다릴게요."
         LineContext.SCENE -> "돌아오셨네요, 오늘의 장면을 남겨 둘게요."
         LineContext.CHAT -> "오늘도 마을은 평온해요."
+        LineContext.WORKSHOP -> "신고 고마워요, 공방을 한 칸 늘렸어요."
     }
 }
 
 /** 렌더 결과 검증: 남은 슬롯 0, 입력에 없는 수치 0, 금칙어 0. */
 object DialogueValidator {
     /** 정비 완료를 차가 확인했다는 식의 표현, 점수·연속일수·접속 압박 표현은 쓰지 않는다. */
-    val FORBIDDEN = listOf("확인했", "확인됐", "점수", "연속", "보고 싶었", "왜 안 왔", "벌점", "펫", "반려")
+    val FORBIDDEN = listOf("확인했", "확인됐", "점수", "연속", "보고 싶었", "왜 안 왔", "벌점")
 
     fun allowedNumbers(s: TripSummary): Set<String> = setOfNotNull(
         s.deltaKm?.toString(), s.villageDay?.toString(), s.materialsReceived.toString(),

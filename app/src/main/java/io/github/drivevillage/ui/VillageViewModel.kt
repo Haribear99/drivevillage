@@ -39,6 +39,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.ZoneId
+import kotlin.math.floor
 
 /** 이번에 연 화면의 정산 결과(화면 표시용). */
 sealed interface OpenResult {
@@ -129,7 +130,7 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
         if (_screen.value == next) return
         _screen.value = next
         if (next != Screen.VILLAGE) stopVoice("screen-$next")
-        Log.i(TAG, "screen=$next gear=${gate.gear} ux=${gate.ux}")
+        Log.i(TAG, "screen=$next gear=${gate.gear} ux=${gate.ux} latch=${signals.safety.reason ?: "-"}")
         when (next) {
             Screen.VILLAGE -> {
                 signals.safety.arm() // 이 순간 이후의 비P·제한·확인 불가는 되돌릴 수 없이 종료
@@ -148,8 +149,12 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
             _odoKm.value = (reading as? OdometerReading.Km)?.value
             val now = signals.nowMillis()
             _now.value = now
-            val gearNow = signals.gear.value
             val r = repo.mutate { current ->
+                // 판독 중(최대 수 초) 화면이 닫혔으면 커밋하지 않는다: 다음에 열 때 같은 증가분으로 장면을 보여 준다.
+                if (signals.safety.isTripped || _screen.value != Screen.VILLAGE) {
+                    return@mutate current to (SceneResult.Held("closed") to false)
+                }
+                val gearNow = signals.gear.value
                 val (settledState, result) = SceneLedger.settle(current, reading, gearNow, now, zone)
                 // 탑승·하차 한 문장을 각각 한 번만: 같은 저장 안에서 기록한다(재시작해도 두 번 말하지 않음).
                 val withVoice = when (result) {
@@ -193,7 +198,7 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
         val st = state.value
         val today = today()
         return TripSummary(
-            deltaKm = deltaKm?.toInt(),
+            deltaKm = deltaKm?.let { floor(it).toInt() },
             timeSlot = SceneLedger.slotOf(_now.value, zone),
             villageDay = SceneLedger.villageDay(st, today),
             openQuests = Maintenance.openQuests(st, currentOdo(), today).map { it.def.title },
@@ -248,7 +253,7 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             if (update { Maintenance.complete(it, def, odo, today) }) {
                 _notice.value = "「${def.title}」 완료를 직접 신고했어요. 공방이 한 칸 증축됐어요."
-                _bubble.value = Bubble(Resident.CRAFTSMAN, "신고 고마워요, 공방을 한 칸 늘렸어요.")
+                _bubble.value = Bubble(Resident.CRAFTSMAN, lines.line(Resident.CRAFTSMAN, LineContext.WORKSHOP, summary(null, 0), state.value.maintenance.workshopLevel))
             } else _notice.value = "지금 열린 부탁이 아니라 신고할 수 없어요."
         }
     }
@@ -294,7 +299,7 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun toggleVoice() {
-        if (!voicePrefLoaded.isCompleted) return
+        if (!voicePrefLoaded.isCompleted || !inVillage()) return
         val on = !_voiceOn.value
         _voiceOn.value = on
         if (!on) stopVoice("muted")

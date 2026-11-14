@@ -86,13 +86,45 @@ class VillageCoreTest {
         val (h, rh) = SceneLedger.settle(s0, OdometerReading.Failed("timeout"), GearState.PARK, at(1), zone)
         assertTrue(rh is SceneResult.Held)
         assertEquals(s0, h)
-        val (rv, rr) = settle(s0, 500.0, at(1))
+        // 한 번 낮게 읽히면 보류(기준값 유지), 같은 값이 다음에도 읽혀야 재설정
+        val (once, r1) = settle(s0, 500.0, at(1))
+        assertEquals(SceneResult.Held("reversed-unconfirmed"), r1)
+        assertEquals(1012.0, once.ledger.baselineKm!!, 0.0)
+        val (rv, rr) = settle(once, 500.0, at(1, 19))
         assertEquals(SceneResult.Reversed, rr)
         assertEquals(500.0, rv.ledger.baselineKm!!, 0.0)
         assertEquals(s0.materials, rv.materials)
-        for (bad in listOf(Double.NaN, Double.POSITIVE_INFINITY, -1.0)) {
+        for (bad in listOf(Double.NaN, Double.POSITIVE_INFINITY, -1.0, 0.0)) {
             assertTrue(settle(s0, bad, at(1)).second is SceneResult.Held)
         }
+    }
+
+    /** 일시적으로 낮은 값(0 포함) 뒤 정상 값: 이미 센 거리로 장면이 다시 생기지 않는다. */
+    @Test fun transientLowReading_doesNotRecountDistance() {
+        val s0 = settle(started(50_000.0), 50_010.0, at(0)).first
+        for (glitch in listOf(0.0, 50_005.0)) {
+            val (g, _) = settle(s0, glitch, at(1))
+            val (n, r) = settle(g, 50_010.0, at(1, 19))
+            assertEquals(SceneResult.Boarding, r)
+            assertEquals(s0.ledger.sceneCount, n.ledger.sceneCount)
+            assertEquals(s0.materials, n.materials)
+            assertNull(n.ledger.reversalCandidateKm)
+        }
+    }
+
+    /** 시계가 앞섰다가 돌아오거나 하루 뒤로 가도 저장이 막히지 않고, 재료는 다시 지급되지 않는다. */
+    @Test fun clockGoesBackward_noExtraMaterials_stateStaysValid() {
+        val file = File(tmp.root, "clock.json")
+        val a = settle(started(), 1010.0, at(400)).first // 시계가 400일 앞선 상태에서 지급
+        FileStateStore(file).save(a)
+        for ((i, d) in listOf(0L, -1L, 1L).withIndex()) {
+            val loaded = FileStateStore(file).load()
+            val (n, r) = settle(loaded, 1020.0 + i * 10, at(d))
+            assertTrue((r as SceneResult.Scene).alreadyGotToday)
+            assertTrue(StateValidator.isValid(n))
+            FileStateStore(file).save(n) // 예외 없이 저장
+        }
+        assertEquals(SceneLedger.MATERIALS_PER_DAY, FileStateStore(file).load().materials.size)
     }
 
     // ── 재료: 하루 1회, 거리와 무관한 동일량, 날짜·기억 태그 ──
@@ -190,6 +222,16 @@ class VillageCoreTest {
         val st = Maintenance.status(QuestDef.ENGINE_OIL, done, 20_200.0, d + 41)!!
         assertFalse(st.open); assertEquals(9_900.0, st.kmLeft!!, 1e-9)
         assertTrue(StateValidator.isValid(done))
+    }
+
+    @Test fun setup_resave_keepsCheckInBaseDay() {
+        val d = day0.toEpochDay()
+        val s = withSetup(0.0, d - 400, today = d)
+        val later = LocalDate.ofEpochDay(d).plusMonths(1).toEpochDay()
+        assertTrue(Maintenance.status(QuestDef.COOLANT_LEVEL, s, 1.0, later)!!.open)
+        val resaved = Maintenance.saveSetup(s, Maintenance.newSetup(CarPreset.CUSTOM, 0.0, d - 400, 8_000, 12, later)!!)
+        assertTrue(Maintenance.status(QuestDef.COOLANT_LEVEL, resaved, 1.0, later)!!.open) // 열린 체크인 유지
+        assertEquals(8_000, resaved.maintenance.setup!!.oilKm)
     }
 
     // ── 미션(조연) ──
