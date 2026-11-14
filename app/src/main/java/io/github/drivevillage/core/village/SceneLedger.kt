@@ -34,10 +34,12 @@ sealed interface SceneResult {
         val missionDone: MissionDef?,
         /** 이번에 넘은 1,000km 이정표 수(상한 적용 전). */
         val milestonesCrossed: Int = 0,
-        /** 이번에 지급한 기념물 수(상한 적용 후). */
+        /** 이번에 지급한 기념물 수(상한 적용 후, 이전에 넘어온 것 포함). */
         val monumentsGranted: Int = 0,
         /** 새 계절 첫 정산이면 계절 장식. */
         val seasonal: Material? = null,
+        /** 상한 때문에 다음 정산으로 넘어간 기념물 수. */
+        val monumentsPending: Int = 0,
     ) : SceneResult
 }
 
@@ -58,7 +60,7 @@ object SceneLedger {
     const val JOURNEY_MATERIALS_PER_DAY = 1
     /** 이정표 간격(km). */
     const val MILESTONE_KM = 1_000.0
-    /** 한 번의 정산에서 줄 수 있는 기념물 상한(과주행 유도 방지, 팀 가정값). */
+    /** 한 번의 정산에서 줄 수 있는 기념물 상한(과주행 유도 방지, 팀 가정값). 넘는 몫은 다음 정산으로 넘어간다. */
     const val MAX_MILESTONES_PER_SETTLEMENT = 3
     private val JOURNEY_KINDS = MaterialKind.entries.filter { it.source == ItemSource.JOURNEY }
     const val HISTORY_LIMIT = 60
@@ -119,15 +121,17 @@ object SceneLedger {
             item("m-$eventId", JOURNEY_KINDS[Math.floorMod(today, JOURNEY_KINDS.size.toLong()).toInt()]),
         )
 
-        // ② 이정표: 정산 누적 거리 1,000km마다 기념물 1개. 한 번에 여러 개를 넘어도 최대 [MAX_MILESTONES_PER_SETTLEMENT]개.
-        // 넘은 이정표는 지급 여부와 무관하게 모두 '셈한 것'으로 기록해 같은 이정표로 두 번 주지 않는다.
+        // ② 이정표: 정산 누적 거리 1,000km마다 기념물 1개. 한 번의 정산에서는 최대 [MAX_MILESTONES_PER_SETTLEMENT]개.
+        // 상한에 걸린 기념물은 사라지지 않고 다음 정산으로 넘어간다(이정표 n번 기념물 id = mon-n, 두 번 주지 않음).
         val newSceneKm = ledger.sceneKm + delta
-        val reached = floor(newSceneKm / MILESTONE_KM).toInt()
-        val crossed = (reached - ledger.milestonesCounted).coerceAtLeast(0)
-        val monuments = (1..minOf(crossed, MAX_MILESTONES_PER_SETTLEMENT))
-            .map { k -> "mon-${ledger.milestonesCounted + k}" }
+        val reached = maxOf(ledger.milestonesCounted, floor(newSceneKm / MILESTONE_KM).toInt())
+        val crossed = reached - ledger.milestonesCounted
+        val owed = (reached - ledger.monumentsGiven).coerceAtLeast(0)
+        val monuments = (1..minOf(owed, MAX_MILESTONES_PER_SETTLEMENT))
+            .map { k -> "mon-${ledger.monumentsGiven + k}" }
             .filter { it !in existingIds }
             .map { item(it, MaterialKind.MONUMENT) }
+        val monumentsGiven = ledger.monumentsGiven + minOf(owed, MAX_MILESTONES_PER_SETTLEMENT)
 
         // ③ 새 계절 첫 정산: 계절 장식 1개. 계절 번호가 앞으로 갈 때만(시계가 앞섰던 기록은 무시).
         val season = seasonIndex(today)
@@ -153,7 +157,8 @@ object SceneLedger {
                 sceneCount = ledger.sceneCount + 1,
                 sceneKm = newSceneKm,
                 lastMaterialEpochDay = if (alreadyGot) ledger.lastMaterialEpochDay else today,
-                milestonesCounted = maxOf(ledger.milestonesCounted, reached),
+                milestonesCounted = reached,
+                monumentsGiven = monumentsGiven,
                 lastSeasonIndex = if (seasonal.isNotEmpty()) season else ledger.lastSeasonIndex,
                 reversalCandidateKm = null,
                 scenes = (ledger.scenes + record).takeLast(HISTORY_LIMIT),
@@ -161,7 +166,7 @@ object SceneLedger {
             materials = founded.materials + newMaterials,
             missions = missions,
         )
-        return next to SceneResult.Scene(record, newMaterials, alreadyGot, missionDone, crossed, monuments.size, seasonal.firstOrNull())
+        return next to SceneResult.Scene(record, newMaterials, alreadyGot, missionDone, crossed, monuments.size, seasonal.firstOrNull(), reached - monumentsGiven)
     }
 
     /** 계절 번호: 연도×4 + (봄 0, 여름 1, 가을 2, 겨울 3). 1·2월은 전년 겨울. */

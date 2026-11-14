@@ -206,18 +206,21 @@ private fun ScenePanel(vm: VillageViewModel, state: AppState, open: OpenResult, 
             val since = rec.sinceMillis?.let { SceneLedger.dateLabel(SceneLedger.epochDay(it, java.time.ZoneId.systemDefault())) }
             Body(
                 listOfNotNull(
-                    if (since != null && days != null) "지난번($since) 이후 ${days}일" else "마을 시작 이후",
+                    when {
+                        since == null || days == null -> "마을 시작 이후"
+                        days == 0 -> "오늘 앞선 정산 이후"
+                        else -> "지난번($since) 이후 ${days}일"
+                    },
                     "${kotlin.math.floor(rec.deltaKm).toLong()}km 달렸어요",
                 ).joinToString(" · "), size = 18,
             )
             val total = state.ledger.sceneKm
             val toNext = SceneLedger.MILESTONE_KM - (total % SceneLedger.MILESTONE_KM)
             Body("누적 ${kotlin.math.floor(total).toLong()}km · 이정표 ${state.ledger.milestonesCounted}개 · 다음 이정표까지 약 ${kotlin.math.ceil(toNext).toLong()}km", VillageTheme.subtext, 13)
-            if (open.milestonesCrossed > 0) {
-                Body("1,000km 이정표 ${open.milestonesCrossed}개를 넘었어요. 기념물 ${open.monumentsGranted}개를 세웠어요.", Color(0xFF9FE0A8), 14)
-                if (open.milestonesCrossed > open.monumentsGranted) {
-                    Body("기념물은 한 번에 최대 ${SceneLedger.MAX_MILESTONES_PER_SETTLEMENT}개까지예요(많이 달리게 만들지 않으려는 상한).", VillageTheme.subtext, 12)
-                }
+            if (open.milestonesCrossed > 0) Body("1,000km 이정표 ${open.milestonesCrossed}개를 넘었어요.", Color(0xFF9FE0A8), 14)
+            if (open.monumentsGranted > 0) Body("이정표 기념물 ${open.monumentsGranted}개를 세웠어요.", Color(0xFF9FE0A8), 14)
+            if (open.monumentsPending > 0) {
+                Body("기념물은 한 번에 ${SceneLedger.MAX_MILESTONES_PER_SETTLEMENT}개까지라 ${open.monumentsPending}개는 다음 정산 때 세워요(사라지지 않아요).", VillageTheme.subtext, 12)
             }
             if (open.newMaterials.isNotEmpty()) {
                 Body("이번에 받은 것:")
@@ -225,7 +228,7 @@ private fun ScenePanel(vm: VillageViewModel, state: AppState, open: OpenResult, 
             }
             if (open.alreadyGotToday) Body("재료는 하루 한 번이라 이번에는 이미 받았어요. 이 여정은 일기에 남겨요.", VillageTheme.subtext, 13)
             open.missionDone?.let { Body("미션 도장: ${it.title}", Color(0xFF9FE0A8)) }
-            Body("앱을 안 연 날이 있어도 달린 거리와 넘은 이정표는 사라지지 않아요. 다음 정산에 모두 합쳐져요.", VillageTheme.subtext, 12)
+            Body("앱을 안 연 날이 있어도 달린 거리·넘은 이정표의 기념물·정비 부탁은 사라지지 않고 다음 정산에 합쳐져요. 재료만은 정산할 때 하루 하나예요.", VillageTheme.subtext, 12)
             Spacer(Modifier.height(6.dp))
             Body("이번 여정의 한 줄(고르면 받은 것의 기억 태그가 돼요)", VillageTheme.subtext, 13)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -292,11 +295,16 @@ private fun QuestCard(vm: VillageViewModel, st: QuestStatus, currentOdo: Double?
                         OutlinedButton(onClick = { vm.respondQuest(st.def, QuestResponse.LATER) }) { Text(QuestResponse.LATER.label, fontSize = 12.sp) }
                     }
                 } else {
-                    Stepper("정비 당시 주행거리(선택)", "${serviceKm.roundToLong()}km", listOf("-1000" to -1000.0, "-100" to -100.0, "+100" to 100.0)) {
-                        serviceKm = (serviceKm + it).coerceIn(0.0, currentOdo ?: Double.MAX_VALUE)
+                    val minKm = vm.minServiceKm(st.def)
+                    if (currentOdo != null && minKm != null) {
+                        Stepper("정비 당시 주행거리(선택)", "${serviceKm.roundToLong()}km", listOf("-1000" to -1000.0, "-100" to -100.0, "+100" to 100.0)) {
+                            serviceKm = (serviceKm + it).coerceIn(minKm, currentOdo)
+                        }
                     }
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Button(onClick = { vm.respondQuest(st.def, QuestResponse.DONE, serviceKm) }) { Text("이 주행거리로 기록(+기념패)", fontSize = 12.sp) }
+                        if (currentOdo != null && minKm != null) {
+                            Button(onClick = { vm.respondQuest(st.def, QuestResponse.DONE, serviceKm) }) { Text("이 주행거리로 기록(+기념패)", fontSize = 12.sp) }
+                        }
                         OutlinedButton(onClick = { vm.respondQuest(st.def, QuestResponse.DONE) }) { Text("주행거리 없이 기록", fontSize = 12.sp) }
                         TextButton(onClick = { doneOpen = false }) { Text("취소", fontSize = 12.sp) }
                     }

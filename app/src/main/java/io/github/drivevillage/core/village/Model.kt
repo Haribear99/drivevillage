@@ -30,6 +30,8 @@ data class LedgerState(
     val lastMaterialEpochDay: Long? = null,
     /** 지금까지 넘은(지급 여부와 무관하게 셈한) 1,000km 이정표 수. 같은 이정표로 두 번 지급하지 않는 근거. */
     val milestonesCounted: Int = 0,
+    /** 지금까지 지급한 이정표 기념물 수. 넘은 이정표 − 지급한 기념물 = 다음 정산으로 넘어간 기념물. */
+    val monumentsGiven: Int = 0,
     /** 계절 장식을 마지막으로 준 계절 번호([SceneLedger.seasonIndex]). */
     val lastSeasonIndex: Long? = null,
     /** 기준값보다 작은 값을 한 번 읽었을 때의 후보. 같은 값이 다음 정산에도 읽혀야 기준값을 바꾼다(일시 오류 방지). */

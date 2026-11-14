@@ -121,11 +121,16 @@ object Maintenance {
      */
     fun status(def: QuestDef, state: AppState, odoKm: Double?, today: Long): QuestStatus? {
         val setup = state.maintenance.setup ?: return null
-        val b = base(def, state.maintenance, setup)
+        val raw = base(def, state.maintenance, setup)
+        // 시계가 앞선 상태에서 저장된 기준일(오늘보다 미래)은 믿지 않고 '지금 도래'로 본다(다시 답하면 기준이 바로잡힌다).
+        // 미룸 기한이 가능한 최대 미룸보다 멀면 미룸이 끝난 것으로 본다.
+        val maxSnooze = maxOf(RESERVE_RECHECK_DAYS, LATER_DAYS)
+        val futureBase = raw.baseEpochDay > today + 1
+        val b = raw.copy(snoozeUntilDay = raw.snoozeUntilDay?.takeIf { it <= today + maxSnooze + 1 })
         val kmInterval = def.intervalKm(setup)
         val months = def.intervalMonths(setup)
         val kmLeft = if (kmInterval != null && b.baseKm != null && odoKm != null) b.baseKm + kmInterval - odoKm else null
-        val dueDay = months?.let { LocalDate.ofEpochDay(b.baseEpochDay).plusMonths(it.toLong()).toEpochDay() }
+        val dueDay = months?.let { if (futureBase) today else LocalDate.ofEpochDay(b.baseEpochDay).plusMonths(it.toLong()).toEpochDay() }
         val daysLeft = dueDay?.let { it - today }
         val byKm = kmLeft != null && kmLeft <= 0
         val byDate = daysLeft != null && daysLeft <= 0
@@ -168,12 +173,13 @@ object Maintenance {
     ): Pair<AppState, List<Material>>? {
         val st = status(def, state, odoKm, today) ?: return null
         if (!st.open) return null
-        if (serviceKm != null) {
-            if (response != QuestResponse.DONE) return null
-            if (serviceKm.isNaN() || serviceKm.isInfinite() || serviceKm < 0) return null
-            if (odoKm != null && serviceKm > odoKm) return null
-        }
         val setup = state.maintenance.setup ?: return null
+        if (serviceKm != null) {
+            if (response != QuestResponse.DONE || odoKm == null) return null
+            if (serviceKm.isNaN() || serviceKm.isInfinite() || serviceKm < 0 || serviceKm > odoKm) return null
+            // 기록하자마자 다시 도래하는 값(정비 주기보다 오래된 주행거리)은 받지 않는다: 주기당 1회 보상 우회 방지.
+            if (serviceKm < minServiceKm(def, setup, odoKm)) return null
+        }
         val rec0 = state.maintenance.records[def.id] ?: base(def, state.maintenance, setup)
         val existing = state.materials.mapTo(HashSet()) { it.id }
         val eventId = "quest-${def.id}-${rec0.cycle}"
@@ -209,6 +215,12 @@ object Maintenance {
             materials = state.materials + rewards,
         )
         return next to rewards
+    }
+
+    /** '했어요'에 넣을 수 있는 정비 당시 주행거리의 하한: 기록 직후 km 쪽으로 다시 도래하지 않는 값. */
+    fun minServiceKm(def: QuestDef, setup: MaintenanceSetup, odoKm: Double): Double {
+        val interval = def.intervalKm(setup) ?: return 0.0
+        return (odoKm - interval + 1.0).coerceAtLeast(0.0)
     }
 
     /** '예약했어요' 뒤 재확인까지의 일수(팀 가정값). */

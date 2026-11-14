@@ -239,22 +239,42 @@ class VillageCoreTest {
         assertTrue(StateValidator.isValid(s))
     }
 
-    /** 한 번에 이정표 여러 개를 넘어도 기념물은 최대 3개. 넘은 이정표는 모두 셈해 다음에 다시 주지 않는다. */
-    @Test fun milestone_capThreePerSettlement_noBackPay() {
+    /** 한 번에 이정표 여러 개를 넘어도 정산 1회 기념물은 최대 3개. 남은 몫은 다음 정산으로 넘어가고 두 번 주지 않는다. */
+    @Test fun milestone_capThreePerSettlement_remainderCarriesOver() {
         val (a, ra) = settle(started(10_000.0), 15_200.0, at(0)) // 5,200km → 이정표 5개
         ra as SceneResult.Scene
         assertEquals(5, ra.milestonesCrossed)
         assertEquals(SceneLedger.MAX_MILESTONES_PER_SETTLEMENT, ra.monumentsGranted)
+        assertEquals(2, ra.monumentsPending)
         assertEquals(5, a.ledger.milestonesCounted)
         assertEquals(3, a.materials.count { it.kind == MaterialKind.MONUMENT })
-        val (b, rb) = settle(a, 15_900.0, at(1)) // 5,900km: 새 이정표 없음
-        assertEquals(0, (rb as SceneResult.Scene).monumentsGranted)
-        val (c, rc) = settle(b, 16_000.0, at(2)) // 6,000km: 6번째 이정표 1개만
+        // 같은 날 다시 정산해도(재료 없음) 넘어온 기념물 2개는 받는다
+        val (b, rb) = settle(a, 15_900.0, at(0, 21))
+        rb as SceneResult.Scene
+        assertEquals(0, rb.milestonesCrossed); assertEquals(2, rb.monumentsGranted); assertEquals(0, rb.monumentsPending)
+        val (c, rc) = settle(b, 16_000.0, at(2)) // 6,000km: 6번째 이정표 1개
         assertEquals(1, (rc as SceneResult.Scene).monumentsGranted)
-        assertTrue(c.materials.any { it.id == "mon-6" })
-        assertEquals(4, c.materials.count { it.kind == MaterialKind.MONUMENT })
-        assertEquals(c.materials.size, c.materials.map { it.id }.toSet().size)
-        assertTrue(StateValidator.isValid(c))
+        val ids = c.materials.filter { it.kind == MaterialKind.MONUMENT }.map { it.id }
+        assertEquals((1..6).map { "mon-$it" }, ids)
+        val (d, rd) = settle(c, 16_100.0, at(3))
+        assertEquals(0, (rd as SceneResult.Scene).monumentsGranted)
+        assertEquals(c.materials.size + 1, d.materials.size) // 재료 1개만
+        assertTrue(StateValidator.isValid(d))
+    }
+
+    /** 정산 1회 상한을 넘는 거리(예: 10,000km)라도 한 번에 3개를 넘게 주지 않는다. */
+    @Test fun milestone_neverMoreThanThreeInOneSettlement() {
+        var s = started(1_000.0)
+        val (a, ra) = settle(s, 11_000.0, at(0))
+        assertEquals(10, (ra as SceneResult.Scene).milestonesCrossed)
+        s = a
+        var t = 1L
+        while (s.ledger.monumentsGiven < 10) {
+            val (n, r) = settle(s, s.ledger.baselineKm!! + 2, at(t++))
+            assertTrue((r as SceneResult.Scene).monumentsGranted <= SceneLedger.MAX_MILESTONES_PER_SETTLEMENT)
+            s = n
+        }
+        assertEquals(10, s.materials.count { it.kind == MaterialKind.MONUMENT })
     }
 
     @Test fun season_firstSettlementOfNewSeason_once() {
@@ -413,10 +433,39 @@ class VillageCoreTest {
         assertEquals(setOf(MaterialKind.GEAR, MaterialKind.MEMORIAL), rw.map { it.kind }.toSet())
         assertEquals(20_050.0, Maintenance.status(QuestDef.ENGINE_OIL, a, 20_300.0, d + 3)!!.baseKm!!, 0.0)
         // 현재 주행거리보다 큰 값·음수·비정상 값, '했어요' 외 응답의 입력은 거부
-        for (bad in listOf(20_301.0, -1.0, Double.NaN)) assertNull(Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, 20_300.0, d + 3, bad))
+        for (bad in listOf(20_301.0, -1.0, Double.NaN, 10_300.0)) assertNull(Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, 20_300.0, d + 3, bad))
+        assertNull(Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, null, d + 3, 20_000.0)) // 주행거리를 모르면 입력 불가
         assertNull(Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.LATER, 20_300.0, d + 3, 20_000.0))
         assertTrue(rw.none { it.tag.contains("확인") })
         assertTrue(StateValidator.isValid(a))
+    }
+
+    /** 오래된 정비 당시 주행거리로 '했어요'를 반복해 보상을 계속 받는 경로가 없다. */
+    @Test fun quest_done_withOldServiceKm_cannotLoopRewards() {
+        val d = day0.toEpochDay()
+        var s = withSetup(10_000.0, d)
+        var got = 0
+        repeat(20) {
+            val min = Maintenance.minServiceKm(QuestDef.ENGINE_OIL, s.maintenance.setup!!, 50_000.0)
+            for (km in listOf(30_000.0, min)) {
+                Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, 50_000.0, d + 1, km)?.let { (n, rw) -> s = n; got += rw.size }
+            }
+        }
+        assertEquals(2, got) // 처음 한 번(톱니 + 기념패)뿐
+        assertEquals(1, s.maintenance.workshopLevel)
+        assertFalse(Maintenance.status(QuestDef.ENGINE_OIL, s, 50_000.0, d + 1)!!.open)
+    }
+
+    /** 시계가 앞선 상태에서 응답해도, 정상 날짜로 돌아오면 체크인이 다시 열린다. */
+    @Test fun quest_respondWithClockAhead_reopensAfterClockFix() {
+        val d = day0.toEpochDay()
+        val s = withSetup(0.0, d, today = d)
+        val ahead = d + 400
+        val (a, _) = Maintenance.respond(s, QuestDef.COOLANT_LEVEL, QuestResponse.DONE, 100.0, ahead)!!
+        val back = LocalDate.ofEpochDay(d + 10).plusMonths(1).toEpochDay()
+        assertTrue(Maintenance.status(QuestDef.COOLANT_LEVEL, a, 100.0, back)!!.open)
+        val (r, _) = Maintenance.respond(s, QuestDef.TIRE_PRESSURE, QuestResponse.RESERVED, 100.0, ahead)!!
+        assertTrue(Maintenance.status(QuestDef.TIRE_PRESSURE, r, 100.0, back)!!.open)
     }
 
     @Test fun setup_resave_keepsCheckInBaseDay() {

@@ -136,6 +136,7 @@ object StateValidator {
             journeyDays.values.all { it.size <= LEGACY_JOURNEY_PER_DAY } &&
             journeyDays.size <= l.sceneCount &&
             l.milestonesCounted >= 0 &&
+            l.monumentsGiven in 0..l.milestonesCounted &&
             s.materials.count { it.kind.source == ItemSource.MILESTONE } <= l.milestonesCounted &&
             s.materials.count { it.kind.source == ItemSource.SEASON } <= l.sceneCount &&
             (journeyDays.isEmpty() || l.lastMaterialEpochDay != null) &&
