@@ -47,11 +47,15 @@ object SceneLedger {
     const val MIN_SCENE_KM = 1.0
     const val MATERIALS_PER_DAY = 2
     const val HISTORY_LIMIT = 60
+    /** 역전 확정 때 두 판독 사이에 인정하는 최대 주행거리(가정값). */
+    const val MAX_KM_BETWEEN_READS = 1_500.0
 
     val TAG_PRESETS = listOf("잠깐 쉬었어요", "친구를 만났어요", "그냥 출근길", "멀리 다녀왔어요", "장 보고 왔어요")
 
     fun settle(state: AppState, reading: OdometerReading, gear: GearState, nowMillis: Long, zone: ZoneId): Pair<AppState, SceneResult> {
         val today = epochDay(nowMillis, zone)
+        // 마을을 시작한 날보다 이른 날짜는 시계 불명(부팅 직후 RTC 초기값 등)으로 보고 아무것도 바꾸지 않는다.
+        state.village.foundedEpochDay?.let { if (today < it) return state to SceneResult.Held("clock-invalid") }
         val founded = foundIfNeeded(state, today)
         val ledger = founded.ledger
         val km = when (reading) {
@@ -65,7 +69,8 @@ object SceneLedger {
         if (km < baseline) {
             // 일시적으로 낮은 값 한 번으로 기준값을 내리면, 다음 정상 값에서 이미 센 거리로 장면이 다시 생긴다.
             // 다음 정산에서도 기준값보다 낮고 후보 이상(그 뒤로 달렸어도)인 값이 읽힐 때만 기준값을 바꾼다.
-            val confirmed = ledger.reversalCandidateKm?.let { km >= it - 1e-6 } == true
+            // 후보와 너무 먼 값(서로 다른 오류값 두 번)은 확정하지 않는다: 하루 주행 가능 거리 이내만.
+            val confirmed = ledger.reversalCandidateKm?.let { km >= it - 1e-6 && km - it <= MAX_KM_BETWEEN_READS } == true
             return if (confirmed) {
                 founded.copy(ledger = ledger.copy(baselineKm = km, lastSettledAtMillis = nowMillis, reversalCandidateKm = null)) to SceneResult.Reversed
             } else {

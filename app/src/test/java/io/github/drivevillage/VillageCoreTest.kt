@@ -140,6 +140,29 @@ class VillageCoreTest {
         assertEquals(SceneLedger.MATERIALS_PER_DAY * 32, atFuture.materials.size)
     }
 
+    /** 부팅 직후 RTC가 과거(마을 시작 전)로 잡히면 보류: 같은 실제 날에 재료가 늘지 않는다. */
+    @Test fun clockBeforeFounding_isHeld_noExtraMaterials() {
+        val a = settle(started(), 1010.0, at(5)).first
+        val rtc1970 = 0L
+        val (h, r) = settle(a, 1020.0, rtc1970)
+        assertEquals(SceneResult.Held("clock-invalid"), r)
+        assertEquals(a, h)
+        val (h2, r2) = settle(a, 1030.0, at(-300))
+        assertEquals(SceneResult.Held("clock-invalid"), r2)
+        assertEquals(a.materials, h2.materials)
+    }
+
+    /** 서로 다른 오류값 두 번(100 → 200)은 역전으로 확정하지 않는다. */
+    @Test fun twoDifferentGlitchValues_doNotConfirmReversal() {
+        val s0 = settle(started(50_000.0), 50_010.0, at(0)).first
+        val g1 = settle(s0, 100.0, at(1)).first
+        val (g2, r2) = settle(g1, 2_000.0, at(1, 19))
+        assertTrue(r2 is SceneResult.Held)
+        assertEquals(50_010.0, g2.ledger.baselineKm!!, 0.0)
+        val (_, back) = settle(g2, 50_010.0, at(2))
+        assertEquals(SceneResult.Boarding, back)
+    }
+
     /** 실제 역전(계기 교체 등) 뒤 매 운행 달려도, 두 번째 낮은 값에서 기준값이 확정돼 장면이 이어진다. */
     @Test fun realReversal_withDrivingBetweenReads_confirms() {
         var s = settle(started(50_000.0), 50_010.0, at(0)).first

@@ -191,6 +191,7 @@ private fun ScenePanel(vm: VillageViewModel, state: AppState, open: OpenResult, 
                     "save-failed" -> "기록을 저장하지 못했어요. 지급한 것은 없고, 다음에 열 때 다시 정산해요."
                     "reversed-unconfirmed" -> "주행거리가 이전 기록보다 작게 읽혔어요. 일시적인 값일 수 있어 기준은 그대로 두었어요."
                     "invalid-value" -> "주행거리 값이 올바르지 않아 이번 정산은 건너뛰었어요."
+                    "clock-invalid" -> "기기 날짜가 마을을 시작한 날보다 이전이라 이번 정산은 건너뛰었어요."
                     else -> "주행거리를 확인하지 못했어요. 기록은 그대로 두고, 다음에 열 때 합쳐서 정산해요."
                 },
             )
