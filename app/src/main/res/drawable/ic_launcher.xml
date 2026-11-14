@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DRIVE VILLAGE 아이콘: 오리지널 도형(언덕 위 작은 집과 길). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#1E2A3A" android:pathData="M0,0h108v108h-108z" />
+    <path android:fillColor="#5E9C6A" android:pathData="M0,72C24,56 84,56 108,72L108,108L0,108Z" />
+    <path android:fillColor="#E9D8B4" android:pathData="M40,48h28v22h-28z" />
+    <path android:fillColor="#C8553D" android:pathData="M36,50L54,32L72,50Z" />
+    <path android:fillColor="#6B4A2F" android:pathData="M50,58h8v12h-8z" />
+    <path android:fillColor="#D9C27A" android:pathData="M50,108L54,74L58,74L66,108Z" />
+    <path android:fillColor="#FFD36B" android:pathData="M80,24m-6,0a6,6 0,1 1,12 0a6,6 0,1 1,-12 0" />
+</vector>

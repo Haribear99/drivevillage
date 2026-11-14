@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 실제로 쓰는 API의 최소 권한만 선언한다(모두 normal 등급). 차량 제어(쓰기)는 하지 않는다. -->
+    <!-- 주행거리(Pleos Odometer) -->
+    <uses-permission android:name="pleos.car.permission.CAR_DRIVE" />
+    <!-- 기어(AAOS GEAR_SELECTION). Pleos SDK Gear API는 Deprecated라 표준 속성을 쓴다. -->
+    <uses-permission android:name="android.car.permission.CAR_POWERTRAIN" />
+
+    <uses-feature android:name="android.hardware.type.automotive" android:required="false" />
+
+    <!-- 정차 중 주민 한 문장(TTS): 설치된 TTS 엔진을 찾기 위한 패키지 가시성 선언(targetSdk 30+). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.NoActionBar">
+
+        <!-- CarUxRestrictionsManager. 자동차가 아닌 기기에서도 설치되도록 필수 아님. -->
+        <uses-library android:name="android.car" android:required="false" />
+
+        <!-- non-DO 앱: distractionOptimized 메타데이터를 선언하지 않는다(주행 중 플랫폼이 차단). -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
