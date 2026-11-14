@@ -128,11 +128,11 @@ object StateValidator {
             l.scenes.size <= l.sceneCount &&
             l.scenes.all { it.deltaKm + EPS >= SceneLedger.MIN_SCENE_KM && (it.tag == null || (it.tag.isNotBlank() && it.tag.length <= MAX_TAG)) } &&
             l.scenes.map { it.eventId }.toSet().size == l.scenes.size &&
-            // 재료: id 중복 없음, 하루 지급량 상한, 지급한 날은 마지막 지급일 이전.
+            // 재료: id 중복 없음, 하루 지급량 상한(시계가 앞섰다 돌아온 이력도 허용).
             s.materials.map { it.id }.toSet().size == s.materials.size &&
             materialDays.values.all { it.size <= SceneLedger.MATERIALS_PER_DAY } &&
             materialDays.size <= l.sceneCount &&
-            (s.materials.isEmpty() || (l.lastMaterialEpochDay != null && materialDays.keys.all { it <= l.lastMaterialEpochDay })) &&
+            (s.materials.isEmpty() || l.lastMaterialEpochDay != null) &&
             // 슬롯: 범위 안, 한 슬롯에 하나.
             slots.all { it in 0 until Decoration.SLOT_COUNT } && slots.toSet().size == slots.size &&
             // 미션: 하루 최대 1개 도장, 아는 미션만.

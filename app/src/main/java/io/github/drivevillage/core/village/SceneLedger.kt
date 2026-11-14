@@ -64,8 +64,8 @@ object SceneLedger {
             ?: return founded.copy(ledger = ledger.copy(baselineKm = km, lastSettledAtMillis = nowMillis)) to SceneResult.FirstMeet
         if (km < baseline) {
             // 일시적으로 낮은 값 한 번으로 기준값을 내리면, 다음 정상 값에서 이미 센 거리로 장면이 다시 생긴다.
-            // 같은 낮은 값이 다음 정산에서도 읽힐 때만 기준값을 바꾼다.
-            val confirmed = ledger.reversalCandidateKm?.let { kotlin.math.abs(it - km) < MIN_SCENE_KM } == true
+            // 다음 정산에서도 기준값보다 낮고 후보 이상(그 뒤로 달렸어도)인 값이 읽힐 때만 기준값을 바꾼다.
+            val confirmed = ledger.reversalCandidateKm?.let { km >= it - 1e-6 } == true
             return if (confirmed) {
                 founded.copy(ledger = ledger.copy(baselineKm = km, lastSettledAtMillis = nowMillis, reversalCandidateKm = null)) to SceneResult.Reversed
             } else {
@@ -80,8 +80,12 @@ object SceneLedger {
         }
 
         val eventId = "scene-${ledger.sceneCount + 1}"
-        // 시계가 뒤로 간 경우(시간대 변경·RTC 오차)도 '이미 받음'으로 본다. 재료는 지급일이 앞으로만 간다.
-        val alreadyGot = ledger.lastMaterialEpochDay?.let { today <= it } == true
+        // 시계가 하루 뒤로 간 경우(시간대 변경 등)는 '이미 받음'으로 본다(이중 지급 방지).
+        // 지급일이 오늘보다 이틀 이상 앞서 있으면 시계가 앞섰던 기록으로 보고 무시한다(지급이 멈추지 않게).
+        // 어떤 경우든 오늘 날짜로 이미 받은 재료가 있으면 다시 주지 않는다(하루 2개 상한).
+        val last = ledger.lastMaterialEpochDay
+        val lastIsFromFutureClock = last != null && last > today + 1
+        val alreadyGot = founded.materials.any { it.epochDay == today } || (last != null && !lastIsFromFutureClock && today <= last)
         val newMaterials = if (alreadyGot) emptyList() else (0 until MATERIALS_PER_DAY).map { i ->
             Material(
                 id = "m-$eventId-$i",

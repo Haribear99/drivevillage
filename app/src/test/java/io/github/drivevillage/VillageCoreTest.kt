@@ -112,19 +112,45 @@ class VillageCoreTest {
         }
     }
 
-    /** 시계가 앞섰다가 돌아오거나 하루 뒤로 가도 저장이 막히지 않고, 재료는 다시 지급되지 않는다. */
-    @Test fun clockGoesBackward_noExtraMaterials_stateStaysValid() {
+    /** 하루 뒤로 간 시계: 이중 지급 없음, 저장 정상. */
+    @Test fun clockOneDayBack_noDoubleGrant() {
+        val a = settle(started(), 1010.0, at(1)).first
+        val (n, r) = settle(a, 1020.0, at(0, 20))
+        assertTrue((r as SceneResult.Scene).alreadyGotToday)
+        assertTrue(StateValidator.isValid(n))
+        assertEquals(SceneLedger.MATERIALS_PER_DAY, n.materials.size)
+    }
+
+    /** 시계가 400일 앞섰다가 돌아와도 저장이 막히지 않고, 정상 날짜에서 하루 1회 지급이 이어지며, 그 미래 날짜에 도달해도 하루 상한을 넘지 않는다. */
+    @Test fun clockAheadThenNormal_dailyGrantContinues_neverExceedsDailyCap() {
         val file = File(tmp.root, "clock.json")
-        val a = settle(started(), 1010.0, at(400)).first // 시계가 400일 앞선 상태에서 지급
-        FileStateStore(file).save(a)
-        for ((i, d) in listOf(0L, -1L, 1L).withIndex()) {
-            val loaded = FileStateStore(file).load()
-            val (n, r) = settle(loaded, 1020.0 + i * 10, at(d))
-            assertTrue((r as SceneResult.Scene).alreadyGotToday)
-            assertTrue(StateValidator.isValid(n))
-            FileStateStore(file).save(n) // 예외 없이 저장
+        var s = settle(started(), 1010.0, at(400)).first
+        FileStateStore(file).save(s)
+        var odo = 1010.0
+        for (d in 0L..30L) {
+            odo += 12
+            val (n, r) = settle(FileStateStore(file).load(), odo, at(d, 18))
+            assertEquals("day $d", SceneLedger.MATERIALS_PER_DAY, (r as SceneResult.Scene).newMaterials.size)
+            FileStateStore(file).save(n); s = n
         }
-        assertEquals(SceneLedger.MATERIALS_PER_DAY, FileStateStore(file).load().materials.size)
+        odo += 12
+        val (atFuture, rf) = settle(s, odo, at(400, 20)) // 앞서 받은 날에 실제로 도달
+        assertTrue((rf as SceneResult.Scene).alreadyGotToday)
+        assertTrue(StateValidator.isValid(atFuture))
+        assertEquals(SceneLedger.MATERIALS_PER_DAY * 32, atFuture.materials.size)
+    }
+
+    /** 실제 역전(계기 교체 등) 뒤 매 운행 달려도, 두 번째 낮은 값에서 기준값이 확정돼 장면이 이어진다. */
+    @Test fun realReversal_withDrivingBetweenReads_confirms() {
+        var s = settle(started(50_000.0), 50_010.0, at(0)).first
+        val (h, rh) = settle(s, 30_000.0, at(1))
+        assertEquals(SceneResult.Held("reversed-unconfirmed"), rh)
+        val (c, rc) = settle(h, 30_012.0, at(1, 19))
+        assertEquals(SceneResult.Reversed, rc)
+        assertEquals(30_012.0, c.ledger.baselineKm!!, 0.0)
+        s = c
+        val (_, r) = settle(s, 30_024.0, at(2))
+        assertEquals(12.0, (r as SceneResult.Scene).record.deltaKm, 1e-9)
     }
 
     // ── 재료: 하루 1회, 거리와 무관한 동일량, 날짜·기억 태그 ──
