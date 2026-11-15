@@ -209,6 +209,64 @@ private fun facilitySpots(a: VillageArt, w: Float, h: Float, u: Float, workshopL
     )
 }
 
+/**
+ * 그리기 단계(약 15fps)마다 새로 만들던 객체(시설 자리, 빛 그라디언트, z·깃발 경로, 점선·테두리 획)를
+ * 마을 칸 크기가 같은 동안 재사용한다. 그래픽([art])과 공방 단계가 바뀌면 새로 만든다(호출자가 remember 키로 둔다).
+ * 그리는 결과는 매 틱 새로 만들던 때와 같다(투명도처럼 매 틱 바뀌는 값은 그릴 때 alpha로 넘긴다).
+ */
+private class DrawCache(private val art: VillageArt, private val workshopLevel: Int) {
+    private var w = -1f
+    private var h = -1f
+    var spots: List<FacilitySpot> = emptyList(); private set
+    /** 쉬는 표시 z를 그릴 자리: 시설마다 하나(가로등은 앞의 하나). */
+    var zSpots: List<FacilitySpot> = emptyList(); private set
+    var zPaths: List<Path> = emptyList(); private set
+    var zOuter: Stroke = Stroke(); private set
+    var zInner: Stroke = Stroke(); private set
+    var slotRing: Stroke = Stroke(); private set
+    var ringOuter: Stroke = Stroke(); private set
+    var ringInner: Stroke = Stroke(); private set
+    var pennant: Path? = null; private set
+    var pennantTop: Offset = Offset.Zero; private set
+    /** 화로 불빛(알파 1 기준, 깜박임은 그릴 때 alpha). */
+    var forgeGlow: Brush? = null; private set
+    var forgeGlowAt: Offset = Offset.Zero; private set
+    /** 밤 가로등 빛(알파 1 기준, 맥박은 그릴 때 alpha). [LAMPS] 순서. */
+    var lampGlow: List<Pair<Brush, Offset>> = emptyList(); private set
+    /** 점등 연출의 별 경로(연출 동안만 쓰고 매번 다시 채운다). */
+    val star = Path()
+
+    fun update(w: Float, h: Float) {
+        if (w == this.w && h == this.h) return
+        this.w = w; this.h = h
+        val u = min(w, h)
+        val s = facilitySpots(art, w, h, u, workshopLevel)
+        spots = s
+        zSpots = s.distinctBy { it.facility }
+        zPaths = zSpots.map { sleepZPath(it.rect, u) }
+        zOuter = Stroke(width = u * 0.014f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        zInner = Stroke(width = u * 0.006f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        slotRing = Stroke(width = u * 0.008f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(u * 0.015f, u * 0.012f)))
+        ringOuter = Stroke(width = u * 0.012f)
+        ringInner = Stroke(width = u * 0.006f)
+        val fr = s[2].rect
+        if (workshopLevel.coerceIn(0, 4) >= 3) {
+            val top = Offset(fr.center.x + fr.width * 0.30f, fr.bottom - fr.height * 0.92f)
+            pennantTop = top
+            pennant = Path().apply {
+                moveTo(top.x, top.y - u * 0.07f); lineTo(top.x + u * 0.05f, top.y - u * 0.055f); lineTo(top.x, top.y - u * 0.04f); close()
+            }
+        } else pennant = null
+        val fc = Offset(fr.center.x + fr.width * 0.07f, fr.bottom - fr.height * 0.25f)
+        forgeGlowAt = fc
+        forgeGlow = Brush.radialGradient(listOf(Color(0xFFFFC46B).copy(alpha = 0.4f), Color.Transparent), fc, u * 0.09f)
+        lampGlow = LAMPS.map { (lx, ly, lh) ->
+            val gc = Offset(w * lx - u * lh * art.lamp.width / art.lamp.height * 0.22f, h * ly - u * lh * 0.86f)
+            Brush.radialGradient(listOf(Color(0xFFFFE08A).copy(alpha = 0.5f), Color.Transparent), gc, u * 0.09f) to gc
+        }
+    }
+}
+
 /** 말풍선이 피해야 할 자리: 시설(몸체 + 회전 원) + 공방 굴뚝 연기가 오르는 칸. 그리기·탭 판정과 같은 [facilitySpots] 값을 쓴다. */
 internal fun villageObstacles(a: VillageArt, w: Float, h: Float, workshopLevel: Int): List<Rect> {
     val u = min(w, h)
@@ -328,6 +386,7 @@ fun VillageCanvas(
         }
     }
     val a = art
+    val cache = remember(a, workshopLevel) { a?.let { DrawCache(it, workshopLevel) } }
     Canvas(
         modifier.pointerInput(highlightSlots, placed, a != null, workshopLevel) {
             if (a == null) return@pointerInput // 그래픽이 보이기 전에는 보이지 않는 슬롯·주민·시설을 누를 수 없다.
@@ -350,14 +409,15 @@ fun VillageCanvas(
             }
         },
     ) {
-        if (a == null) return@Canvas
+        if (a == null || cache == null) return@Canvas
         val w = size.width; val h = size.height; val u = min(w, h)
         // 시계 값은 여기(그리기 단계)에서만 읽는다.
         val ms = clock.ms.longValue
         val ph = (ms % CYCLE_MS).toFloat() / CYCLE_MS * (2 * PI).toFloat()
         val night = timeSlot == TimeSlot.EVENING || timeSlot == TimeSlot.NIGHT
         val tint = timeTint(timeSlot)
-        val spots = facilitySpots(a, w, h, u, workshopLevel)
+        cache.update(w, h)
+        val spots = cache.spots
         val (windmill, mill, forge) = spots
         val lamp1 = spots[3]; val lamp2 = spots[4]; val garden = spots[5]
 
@@ -370,7 +430,8 @@ fun VillageCanvas(
         val lvl = workshopLevel.coerceIn(0, 4)
         val fr = forge.rect
         if (Facility.FORGE !in needingCare) drawSmoke(fr, ms, u) // 쉬는 공방은 연기도 멈춘다.
-        if (lvl >= 3) drawPennant(Offset(fr.center.x + fr.width * 0.30f, fr.bottom - fr.height * 0.92f), u)
+        val pennant = cache.pennant
+        if (lvl >= 3 && pennant != null) drawPennant(cache.pennantTop, pennant, u)
         residentSprite(a, Resident.CRAFTSMAN, w, h, u, ph)
         residentSprite(a, Resident.GARDENER, w, h, u, ph)
         drawSpot(lamp1, Facility.LAMP in needingCare)
@@ -396,39 +457,38 @@ fun VillageCanvas(
             if (placed.any { it.placedSlot == i }) return@forEachIndexed
             drawCircle(
                 if (highlightSlots) Color(0xFFFFE08A) else Color(0x88FFFFFF), u * 0.045f, Offset(o.x * w, o.y * h),
-                style = Stroke(width = u * 0.008f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(u * 0.015f, u * 0.012f))),
+                style = cache.slotRing,
             )
         }
 
         if (Facility.FORGE !in needingCare) { // 쉬는 공방은 화로 불빛이 꺼진다(깜박임도 멈춤).
-            val fx = fr.center.x + fr.width * 0.07f
-            val fy = fr.bottom - fr.height * 0.25f
             val flick = 0.55f + 0.25f * sin(ph * 36f) + 0.1f * sin(ph * 53f)
-            drawCircle(Brush.radialGradient(listOf(Color(0xFFFFC46B).copy(alpha = 0.4f * flick), Color.Transparent), Offset(fx, fy), u * 0.09f), u * 0.09f, Offset(fx, fy))
+            cache.forgeGlow?.let { drawCircle(it, u * 0.09f, cache.forgeGlowAt, alpha = flick) }
         }
         if (night) { // 가로등은 저녁·밤에 켜진다. 쉬는 중이면 켜진 채 깜박임만 멈춘다.
             val lampResting = Facility.LAMP in needingCare
-            for ((lx, ly, lh) in LAMPS) {
-                val gc = Offset(w * lx - u * lh * a.lamp.width / a.lamp.height * 0.22f, h * ly - u * lh * 0.86f)
-                val pulse = if (lampResting) 0.8f else 0.8f + 0.2f * sin(ph * 12f + lx * 9f)
-                drawCircle(Brush.radialGradient(listOf(Color(0xFFFFE08A).copy(alpha = 0.5f * pulse), Color.Transparent), gc, u * 0.09f), u * 0.09f, gc)
+            for (i in LAMPS.indices) {
+                val (brush, gc) = cache.lampGlow[i]
+                val pulse = if (lampResting) 0.8f else 0.8f + 0.2f * sin(ph * 12f + LAMPS[i].first * 9f)
+                drawCircle(brush, u * 0.09f, gc, alpha = pulse)
             }
         }
 
         // 쉬는 시설마다 작은 "z" 하나(가로등은 두 개 중 앞의 하나에만). 숫자·배지·합산 표시는 두지 않는다.
-        spots.distinctBy { it.facility }.forEach { s -> if (s.facility in needingCare) drawSleepZ(s.rect, u) }
+        val zSpots = cache.zSpots
+        for (i in zSpots.indices) if (zSpots[i].facility in needingCare) drawSleepZ(cache.zPaths[i], cache.zOuter, cache.zInner)
 
         // 점등 연출: 빛이 번지는 원 + 반짝임(위치·크기·투명도만 바뀐다).
         val wp = wakeAnim.value
         val wf = wake?.facility
-        if (wf != null && wp < 1f) spots.filter { it.facility == wf }.forEach { drawWake(it.rect, wp, u) }
+        if (wf != null && wp < 1f) for (s in spots) if (s.facility == wf) drawWake(s.rect, wp, u, cache.star)
 
         // 재료를 놓은 자리의 반짝임, 탭 링(1회씩).
         val sp = sparkle.value
         val ss = sparkleSlot.intValue
         if (sp < 1f && ss in VillageLayout.slots.indices) VillageLayout.slots[ss].let { drawSparkle(it.x * w, it.y * h, sp, u) }
         val rp = ring.value
-        if (rp < 1f) drawTapRing(ringAt.value, rp, u)
+        if (rp < 1f) drawTapRing(ringAt.value, rp, u, cache.ringOuter, cache.ringInner)
     }
 }
 
@@ -469,26 +529,30 @@ private fun DrawScope.drawSparkle(cx: Float, cy: Float, p: Float, u: Float) {
 }
 
 /** 탭 링 1회: 누른 자리에서 작은 원이 퍼지며 사라진다. 짙은 테두리 위 크림 선이라 밤낮 모두 보인다. */
-private fun DrawScope.drawTapRing(c: Offset, p: Float, u: Float) {
+private fun DrawScope.drawTapRing(c: Offset, p: Float, u: Float, outer: Stroke, inner: Stroke) {
     val ease = 1f - (1f - p) * (1f - p)
     val radius = u * (0.025f + 0.045f * ease)
     val a = 1f - p
-    drawCircle(Color(0xFF1C2130).copy(alpha = 0.5f * a), radius, c, style = Stroke(width = u * 0.012f))
-    drawCircle(Color(0xFFFFF4CC).copy(alpha = 0.95f * a), radius, c, style = Stroke(width = u * 0.006f))
+    drawCircle(Color(0xFF1C2130).copy(alpha = 0.5f * a), radius, c, style = outer)
+    drawCircle(Color(0xFFFFF4CC).copy(alpha = 0.95f * a), radius, c, style = inner)
 }
 
-/** 쉬는 표시: 시설 오른쪽 위의 작은 "z" 한 글자(글꼴 없이 선으로). 짙은 테두리 위 크림 선이라 밤낮 모두 보인다. */
-private fun DrawScope.drawSleepZ(r: Rect, u: Float) {
+/** 쉬는 표시 "z"의 경로: 시설 오른쪽 위의 작은 한 글자(글꼴 없이 선으로). */
+private fun sleepZPath(r: Rect, u: Float): Path {
     val s = u * 0.034f
     val x = r.right - r.width * 0.22f
     val y = r.top + r.height * 0.06f
-    val z = Path().apply { moveTo(x, y); lineTo(x + s, y); lineTo(x, y + s); lineTo(x + s, y + s) }
-    drawPath(z, Color(0xCC1C2130), style = Stroke(width = u * 0.014f, cap = StrokeCap.Round, join = StrokeJoin.Round))
-    drawPath(z, Color(0xFFF5EFE0), style = Stroke(width = u * 0.006f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    return Path().apply { moveTo(x, y); lineTo(x + s, y); lineTo(x, y + s); lineTo(x + s, y + s) }
 }
 
-/** 점등 1회 연출. p는 0→1 진행도. */
-private fun DrawScope.drawWake(r: Rect, p: Float, u: Float) {
+/** 쉬는 표시: 짙은 테두리 위 크림 선이라 밤낮 모두 보인다. */
+private fun DrawScope.drawSleepZ(z: Path, outer: Stroke, inner: Stroke) {
+    drawPath(z, Color(0xCC1C2130), style = outer)
+    drawPath(z, Color(0xFFF5EFE0), style = inner)
+}
+
+/** 점등 1회 연출. p는 0→1 진행도. [star]는 재사용하는 경로(매번 다시 채운다). */
+private fun DrawScope.drawWake(r: Rect, p: Float, u: Float, star: Path) {
     val ease = 1f - (1f - p) * (1f - p) // 처음 빠르고 끝에 느려진다
     val c = Offset(r.center.x, r.top + r.height * 0.45f)
     val span = maxOf(r.width, r.height)
@@ -503,7 +567,8 @@ private fun DrawScope.drawWake(r: Rect, p: Float, u: Float) {
         val ang = (k * 60f + 15f) * (PI.toFloat() / 180f)
         val d = span * (0.22f + 0.40f * ease)
         val sc = Offset(c.x + cos(ang) * d, c.y + sin(ang) * d * 0.8f)
-        val star = Path().apply {
+        star.reset()
+        star.apply {
             moveTo(sc.x, sc.y - sr); lineTo(sc.x + sr * 0.3f, sc.y - sr * 0.3f); lineTo(sc.x + sr, sc.y)
             lineTo(sc.x + sr * 0.3f, sc.y + sr * 0.3f); lineTo(sc.x, sc.y + sr); lineTo(sc.x - sr * 0.3f, sc.y + sr * 0.3f)
             lineTo(sc.x - sr, sc.y); lineTo(sc.x - sr * 0.3f, sc.y - sr * 0.3f); close()
@@ -520,11 +585,8 @@ private fun DrawScope.residentSprite(a: VillageArt, r: Resident, w: Float, h: Fl
 }
 
 /** 공방 3단계부터 지붕 위에 다는 작은 깃발(정비 신고 누적의 시각 신호). */
-private fun DrawScope.drawPennant(top: Offset, u: Float) {
+private fun DrawScope.drawPennant(top: Offset, tri: Path, u: Float) {
     drawLine(Color(0xFF5A4630), top, Offset(top.x, top.y - u * 0.07f), strokeWidth = u * 0.006f)
-    val tri = Path().apply {
-        moveTo(top.x, top.y - u * 0.07f); lineTo(top.x + u * 0.05f, top.y - u * 0.055f); lineTo(top.x, top.y - u * 0.04f); close()
-    }
     drawPath(tri, Color(0xFFFFC46B))
 }
 

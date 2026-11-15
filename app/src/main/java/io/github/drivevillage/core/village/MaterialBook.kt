@@ -4,8 +4,8 @@ package io.github.drivevillage.core.village
  * 재료 도감(꾸미기 탭)의 순수 계산. 저장 상태를 바꾸지 않고 읽기만 한다.
  *
  * - 늘 같은 순서([MaterialKind] 선언 순서: 정산 재료 → 이정표 → 계절 → 예전 정비 기념품)로 보여 준다.
- * - 예전 정비 기념품(공방 톱니·정비 기념패)은 새로 생기지 않으므로, 둘 중 하나도 가진 적이 없으면 숨기고 10종만 보여 준다.
- *   하나라도 가지고 있으면 12종 모두 보여 준다. 진행도 분모도 보이는 종류 수를 따른다.
+ * - 예전 정비 기념품(공방 톱니·정비 기념패)은 새로 생기지 않으므로, 실제로 가진 종류만 보여 준다
+ *   (현역 10종 + 가진 예전 종류: 10·11·12종). 진행도 분모도 보이는 종류 수를 따른다(가질 수 없는 칸으로 분모가 고정되지 않게).
  * - 한 번이라도 가진 종류는 '만났어요'. 아이템은 지워지지 않으므로 지금 가진 수 = 만난 뒤 모은 수다.
  * - 획득 계기 문구는 실제 지급 규칙([SceneLedger.settle])과 같아야 한다. 정비 응답은 재료를 주지 않는다.
  */
@@ -15,9 +15,11 @@ object MaterialBook {
     /** 새로 생기지 않는 예전 버전의 기념품(0.1.3까지의 정비 응답 보상). */
     private fun retired(kind: MaterialKind): Boolean = kind.source == ItemSource.MAINTENANCE || kind.source == ItemSource.MEMORIAL
 
-    /** 도감에 보이는 종류(고정 순서). 예전 기념품을 하나도 갖지 않았으면 그 둘을 뺀다. */
-    fun visibleKinds(state: AppState): List<MaterialKind> =
-        if (state.materials.any { retired(it.kind) }) ORDER else ORDER.filterNot { retired(it) }
+    /** 도감에 보이는 종류(고정 순서). 예전 기념품은 가진 종류만 남긴다. */
+    fun visibleKinds(state: AppState): List<MaterialKind> {
+        val ownedRetired = state.materials.mapNotNullTo(HashSet()) { m -> m.kind.takeIf { retired(it) } }
+        return ORDER.filter { !retired(it) || it in ownedRetired }
+    }
 
     /** 도감 한 칸. [unplaced]는 마을에 아직 놓지 않은 것(최근에 받은 순: 방금 받은 기억이 먼저 보인다). */
     data class Entry(val kind: MaterialKind, val owned: Int, val unplaced: List<Material>) {

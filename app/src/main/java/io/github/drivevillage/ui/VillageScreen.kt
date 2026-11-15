@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,6 +41,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -84,6 +84,7 @@ fun VillageScreen(vm: VillageViewModel) {
     val odo by vm.odoKm.collectAsState()
     val voiceOn by vm.voiceOn.collectAsState()
     val wake by vm.wake.collectAsState()
+    val voiceHold by vm.voiceHold.collectAsState()
     val blocked by vm.writesBlocked.collectAsState()
     var tab by remember { mutableStateOf(if (state.maintenance.setup == null && open !is OpenResult.Scene) Tab.WORKSHOP else Tab.SCENE) }
     var selectedMaterial by remember { mutableStateOf<String?>(null) }
@@ -127,12 +128,18 @@ fun VillageScreen(vm: VillageViewModel) {
                 onFacility = { sheetFacility = it; sfx(Sfx.TAP) },
                 wake = wake,
             )
-            // 주민 이름표(20sp): 발밑 가운데
+            // 주민 이름표(20sp): 발밑 가운데. 시스템 글자 크기를 키우면 이름표도 커지므로 잰 폭의 절반만큼 당겨 가운데에 둔다.
             VillageLayout.residents.forEach { (r, o) ->
                 Text(
-                    r.displayName, color = Color.White, fontSize = 20.sp, lineHeight = 24.sp,
-                    modifier = Modifier.offset(x = maxWidth * o.x - 27.dp, y = maxHeight * o.y + 2.dp)
-                        .background(Color(0x99000000), RoundedCornerShape(8.dp)).padding(horizontal = 7.dp, vertical = 2.dp),
+                    r.displayName, color = Color.White, fontSize = NAME_TAG_SIZE, lineHeight = NAME_TAG_LINE,
+                    modifier = Modifier
+                        .layout { m, c ->
+                            val p = m.measure(c.copy(minWidth = 0, minHeight = 0))
+                            layout(p.width, p.height) {
+                                p.place((constraints.maxWidth * o.x - p.width / 2f).roundToInt(), (constraints.maxHeight * o.y + NAME_TAG_TOP.toPx()).roundToInt())
+                            }
+                        }
+                        .background(Color(0x99000000), RoundedCornerShape(8.dp)).padding(horizontal = NAME_TAG_PAD_H, vertical = NAME_TAG_PAD_V),
                 )
             }
             // 상단 바 아래쪽 경계(말풍선이 바 밑으로 들어가지 않게).
@@ -165,14 +172,16 @@ fun VillageScreen(vm: VillageViewModel) {
             }
             // 주민 말풍선(본문 24sp): 말하는 주민 곁의 작은 말풍선(꼬리 포함, 폭 제한). 시설을 가장 덜 가리는 쪽에 붙는다.
             // 안내 시트가 떠 있는 동안은 가린다. 가로·세로 모두 누르면 닫히고, 가만 두어도 6초 뒤 숨는다.
+            // 그 말풍선을 목소리로 읽는 중(엔진 준비 대기 포함)이면 6초는 읽기가 끝난(또는 시작 실패가 확정된) 뒤부터 센다.
             bubble?.takeIf { sheetFacility == null }?.let { b ->
-                LaunchedEffect(b) { delay(BUBBLE_AUTO_HIDE_MS); vm.dismissBubble(b) }
+                val speaking = voiceHold == b
+                LaunchedEffect(b, speaking) { if (speaking) return@LaunchedEffect; delay(BUBBLE_AUTO_HIDE_MS); vm.dismissBubble(b) }
                 SpeechBubble(b, barBottomPx, state.maintenance.workshopLevel) { vm.dismissBubble(b) }
             }
             if (!portrait) sheetFacility?.let { f -> facilitySheet(f, Modifier.align(Alignment.BottomCenter)) }
             if (blocked) {
                 Text(
-                    "저장 장치를 확인할 수 없어 이번에는 기록을 저장하지 않아요.", color = Color.White, fontSize = 13.sp,
+                    "저장 장치를 확인할 수 없어 이번에는 기록을 저장하지 않아요.", color = Color.White, fontSize = 20.sp, lineHeight = 26.sp,
                     modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp).background(Color(0xCC9C2A2A), RoundedCornerShape(8.dp)).padding(8.dp),
                 )
             }
@@ -231,6 +240,12 @@ fun VillageScreen(vm: VillageViewModel) {
 
 /** 세로 화면의 마을:패널 높이 비율(마을 1). */
 private const val PORTRAIT_PANEL_WEIGHT = 1.3f
+/** 주민 이름표: 글자, 줄 높이, 발밑에서 띄우는 거리, 안쪽 여백(그리기와 말풍선 자리 계산이 같은 값을 쓴다). */
+private val NAME_TAG_SIZE = 20.sp
+private val NAME_TAG_LINE = 24.sp
+private val NAME_TAG_TOP = 2.dp
+private val NAME_TAG_PAD_H = 7.dp
+private val NAME_TAG_PAD_V = 2.dp
 /** 말풍선이 스스로 숨기까지(ms, 가로·세로 공통). */
 private const val BUBBLE_AUTO_HIDE_MS = 6_000L
 
@@ -294,9 +309,12 @@ private fun SpeechBubble(b: Bubble, barBottomPx: Float, workshopLevel: Int, onDi
             val sw = if (img != null) sh * img.width / img.height else sh * 0.6f
             return Area(o.x * w - sw / 2, o.y * h - sh, o.x * w + sw / 2, o.y * h)
         }
+        // 이름표 자리: 글자 크기 배율을 따라 커진다(한글 한 자 폭을 글자 크기 1em으로 어림, 배율 1이면 예전 값 ±27dp·높이 28dp와 같다).
         fun labelBox(r: Resident): Area {
             val o = VillageLayout.residents.getValue(r)
-            return Area(o.x * w - 27.dp.toPx(), o.y * h + 2.dp.toPx(), o.x * w + 27.dp.toPx(), o.y * h + 30.dp.toPx())
+            val half = (r.displayName.length * NAME_TAG_SIZE.toPx() + 2 * NAME_TAG_PAD_H.toPx()) / 2f
+            val top = o.y * h + NAME_TAG_TOP.toPx()
+            return Area(o.x * w - half, top, o.x * w + half, top + NAME_TAG_LINE.toPx() + 2 * NAME_TAG_PAD_V.toPx())
         }
         val facilities = art?.let { villageObstacles(it, w, h, workshopLevel).map { r -> Area(r.left, r.top, r.right, r.bottom) } }.orEmpty()
         val others = Resident.entries.filter { it != b.resident }.flatMap { listOf(spriteBox(it), labelBox(it)) }
@@ -444,10 +462,7 @@ private fun WorkshopPanel(vm: VillageViewModel, state: AppState, odo: Double?, t
         CardTitle("정비 공방 · ${state.maintenance.workshopLevel}단계")
         CardBody("주행거리와 날짜 중 먼저 도래하는 쪽으로 부탁이 열려요.")
         if (currentOdo == null) CardBody("주행거리를 확인하지 못해 지금은 날짜 기준만 봐요.", VillageTheme.inkWarn)
-        MoreInfo(
-            "응답은 이렇게 기록돼요",
-            "답은 직접 하는 기록이에요(앱은 정비 여부를 알 수 없어요). 어떤 답을 눌러도 재료는 드리지 않아요. 했어요를 누르면 짝이 된 마을 시설이 다시 켜져요. 정비한 날·거리를 남기면 공방이 커져요(선택).",
-        )
+        MoreInfo("응답은 이렇게 기록돼요", Facilities.RESPONSE_NOTE)
     }
     val statuses = Maintenance.all(state, currentOdo, today).sortedBy { if (it.open) 0 else 1 }
     val firstOpen = statuses.firstOrNull { it.open }?.def

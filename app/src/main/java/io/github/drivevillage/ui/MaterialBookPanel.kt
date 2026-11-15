@@ -49,7 +49,7 @@ import io.github.drivevillage.core.voice.Sfx
 private val silhouetteFilter = ColorFilter.tint(VillageTheme.silhouette, BlendMode.SrcIn)
 
 /**
- * 꾸미기 탭 = 재료 도감. 10종(예전 기념품을 가졌으면 12종)을 고정 순서 격자로 보여 주고(칸 64dp 이상, 사이 24dp, 글자 24sp),
+ * 꾸미기 탭 = 재료 도감. 10종(예전 기념품은 가진 종류만 더해 최대 12종)을 고정 순서 격자로 보여 주고(칸 64dp 이상, 사이 24dp, 글자 24sp),
  * 칸을 누르면 아래 카드에 이름과 얻는 법(못 만남) 또는 그날의 기억과 [마을에 놓기](가짐)를 보인다.
  * 칸이 좁아 이름·계기 문구는 칸 안에 넣지 않는다(글자를 줄이지 않고 아래 카드로 보낸다).
  * 앰버는 [마을에 놓기] 하나뿐이다. 고른 재료는 칸을 네이비로 채우고 문구로도 알린다.

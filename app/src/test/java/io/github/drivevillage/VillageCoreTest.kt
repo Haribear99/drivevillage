@@ -684,6 +684,13 @@ class VillageCoreTest {
                 assertTrue("숫자: $t", numbersFree(t))
             }
         }
+        // 정비 탭 응답 설명: 같은 금지 표현·em dash·이모지·숫자 규칙. '했어요 하나로 켜진다'는 틀린 안내를 하지 않는다.
+        val note = io.github.drivevillage.core.village.Facilities.RESPONSE_NOTE
+        banned.forEach { b -> assertFalse("$b: $note", note.contains(b)) }
+        assertTrue("이모지: $note", note.codePoints().noneMatch { it >= 0x1F000 })
+        assertTrue("숫자: $note", numbersFree(note))
+        assertFalse(note.contains("했어요를 누르면"))
+        assertTrue(note.contains("모두 답하면 다시 켜져요"))
     }
 
     private fun numbersFree(t: String) = io.github.drivevillage.core.village.DialogueValidator.numbersIn(t).isEmpty()

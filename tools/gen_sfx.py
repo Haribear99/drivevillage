@@ -12,7 +12,7 @@
 - 고주파 날카로움을 피하려고 기본음은 200Hz~1.6kHz, 배음은 나이퀴스트(11kHz) 아래로 둔다.
 - 기본 볼륨을 낮게: 최대 진폭을 -12dBFS(0.25)로 맞춘다. 앱은 여기에 재생 볼륨을 한 번 더 곱한다.
 
-길이(ms)를 바꾸면 앱의 Sfx.durationMs도 같이 바꿔야 한다(SfxAssetTest가 확인한다).
+길이(ms)를 바꾸면 앱의 Sfx.durationMs도 같이 바꿔야 한다(SoundRulesTest.synthesizedAssetsMatchSfxTable이 확인한다).
 """
 import math
 import os

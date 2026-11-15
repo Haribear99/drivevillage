@@ -99,6 +99,12 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
     val odoKm: StateFlow<Double?> = _odoKm
     private val _bubble = MutableStateFlow<Bubble?>(null)
     val bubble: StateFlow<Bubble?> = _bubble
+    /**
+     * 지금 목소리로 읽는 중(엔진 준비 대기 포함)인 말풍선. 화면은 이 값이 그 말풍선인 동안 자동 숨김 시간을 세지 않고,
+     * 재생이 끝나거나 시작하지 못한 것이 확정된 뒤부터 센다(말하는 도중 말풍선이 사라지지 않게).
+     */
+    private val _voiceHold = MutableStateFlow<Bubble?>(null)
+    val voiceHold: StateFlow<Bubble?> = _voiceHold
     private val _wake = MutableStateFlow<FacilityWake?>(null)
     val wake: StateFlow<FacilityWake?> = _wake
     private val _notice = MutableStateFlow<String?>(null)
@@ -216,7 +222,7 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
                 else -> null
             }
             _bubble.value = bubble
-            if (r.saved && shouldSpeak && bubble != null) speak(bubble.text)
+            if (r.saved && shouldSpeak && bubble != null) speak(bubble)
         }
     }
 
@@ -360,13 +366,25 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
 
     private var speakJob: Job? = null
 
-    private fun speak(text: String) {
+    private fun speak(b: Bubble) {
         speakJob?.cancel()
+        val text = b.text
         val requestedAt = voice.generation()
+        _voiceHold.value = b
+        val t0 = SystemClock.uptimeMillis()
         speakJob = viewModelScope.launch {
             voicePrefLoaded.await()
             withTimeoutOrNull(VOICE_INIT_WAIT_MS) { voice.status.first { it != VillageVoice.Status.INITIALIZING } }
-            if (foreground && VoiceGate.mayStart(_screen.value, signals.safety.isTripped, _voiceOn.value, text)) voice.speak(text, requestedAt)
+            if (foreground && VoiceGate.mayStart(_screen.value, signals.safety.isTripped, _voiceOn.value, text)) {
+                voice.speak(text, requestedAt)
+                // 합성~재생이 끝날 때까지(중단·실패 포함) 말풍선 숨김을 미룬다. 엔진이 응답 없이 멈춰도 상한 뒤에는 놓는다.
+                withTimeoutOrNull(VOICE_HOLD_MAX_MS) { while (voice.isSpeaking()) delay(VOICE_POLL_MS) }
+            }
+        }.also { job ->
+            // 끝남·취소(시작 전 취소 포함) 모두에서 놓는다.
+            job.invokeOnCompletion {
+                if (_voiceHold.compareAndSet(b, null)) Log.i(TAG, "bubble voice hold released after ${SystemClock.uptimeMillis() - t0}ms")
+            }
         }
     }
 
@@ -412,6 +430,9 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
         /** 점등 연출(VillageCanvas, 약 1.3초)이 끝난 뒤 인사를 띄운다. */
         private const val WAKE_GREETING_DELAY_MS = 1_300L
         private const val VOICE_INIT_WAIT_MS = 4_000L
+        /** 말풍선 숨김을 음성 때문에 미루는 최대 시간(합성 만료 10초 + 재생 여유). */
+        private const val VOICE_HOLD_MAX_MS = 20_000L
+        private const val VOICE_POLL_MS = 100L
         private const val VOICE_PREFS = "village_voice"
         private const val VOICE_ON_KEY = "voice_on"
         private const val SAVE_FAIL = "지금은 저장하지 못했어요. 앱을 다시 열어 주세요."

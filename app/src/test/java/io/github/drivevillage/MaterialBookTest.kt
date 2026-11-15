@@ -43,17 +43,20 @@ class MaterialBookTest {
         assertEquals(tenKinds, MaterialBook.entries(owned).map { it.kind })
     }
 
-    @Test fun entries_allTwelve_whenAnyRetiredOwned() {
-        // 톱니 하나만 가져도 12종 모두(기념패 칸 포함) 보이고, 순서는 선언 순서 그대로.
+    @Test fun entries_retiredShownOnlyForOwnedKinds_inDeclarationOrder() {
+        // 톱니만 가졌으면 현역 10종 + 톱니 = 11종. 가질 수 없는 기념패 칸은 보이지 않는다(순서는 선언 순서 그대로).
         val gear = AppState(materials = listOf(mat("g", MaterialKind.GEAR), mat("w", MaterialKind.WOOD)))
         val e = MaterialBook.entries(gear)
-        assertEquals(MaterialKind.entries.toList(), e.map { it.kind })
+        assertEquals(MaterialKind.entries.filter { it != MaterialKind.MEMORIAL }, e.map { it.kind })
         assertTrue(e.first { it.kind == MaterialKind.GEAR }.met)
-        assertFalse(e.first { it.kind == MaterialKind.MEMORIAL }.met)
-        // 기념패만 가져도(마을에 놓여 있어도) 12종
+        assertTrue(e.none { it.kind == MaterialKind.MEMORIAL })
+        // 기념패만 가졌으면(마을에 놓여 있어도) 10종 + 기념패 = 11종, 톱니 칸은 없다
         val memorial = AppState(materials = listOf(mat("m", MaterialKind.MEMORIAL, slot = 3)))
-        assertEquals(12, MaterialBook.entries(memorial).size)
-        assertEquals(MaterialKind.entries.toList(), MaterialBook.visibleKinds(memorial))
+        assertEquals(11, MaterialBook.entries(memorial).size)
+        assertEquals(MaterialKind.entries.filter { it != MaterialKind.GEAR }, MaterialBook.visibleKinds(memorial))
+        // 둘 다 가졌으면 12종
+        val both = AppState(materials = listOf(mat("g", MaterialKind.GEAR), mat("m", MaterialKind.MEMORIAL)))
+        assertEquals(MaterialKind.entries.toList(), MaterialBook.visibleKinds(both))
     }
 
     @Test fun entries_countOwnedPlacedUnplaced_newestUnplacedFirst() {
@@ -76,10 +79,13 @@ class MaterialBookTest {
         assertEquals("0/10 만났어요", MaterialBook.progressLabel(AppState()))
     }
 
-    @Test fun progress_denominatorTwelve_whenRetiredOwned() {
+    @Test fun progress_denominatorCountsOnlyOwnedRetiredKinds() {
         val s = AppState(materials = listOf(mat("a", MaterialKind.WOOD), mat("g", MaterialKind.GEAR), mat("g2", MaterialKind.GEAR)))
         assertEquals(2, MaterialBook.metCount(s))
-        assertEquals("2/12 만났어요", MaterialBook.progressLabel(s))
+        assertEquals("2/11 만났어요", MaterialBook.progressLabel(s))
+        // 기념패만 가진 사용자가 현역 10종을 모두 모으면 11/11(가질 수 없는 칸 때문에 11/12로 멈추지 않는다)
+        val memorialAll = AppState(materials = tenKinds.mapIndexed { i, k -> mat("k$i", k) } + mat("m", MaterialKind.MEMORIAL))
+        assertEquals("11/11 만났어요", MaterialBook.progressLabel(memorialAll))
         // 10종을 모두 만나면 10/10(분모를 넘지 않는다)
         val all = AppState(materials = tenKinds.mapIndexed { i, k -> mat("k$i", k) })
         assertEquals("10/10 만났어요", MaterialBook.progressLabel(all))
@@ -120,6 +126,9 @@ class MaterialBookTest {
             val c = MaterialBook.columns(w, 24f, 64f, count = 10)
             assertTrue("w=$w c=$c", c == 2 || (w - 24f * (c - 1)) / c >= 64f)
         }
+        // 11칸(예전 기념품 한 종류만 가짐): 약수가 없어 들어가는 가장 많은 열. 가로 4열(4·4·3), 세로 6열(6·5)
+        assertEquals(4, MaterialBook.columns(367f, 24f, 64f, count = 11))
+        assertEquals(6, MaterialBook.columns(680f, 24f, 64f, count = 11))
     }
 
     @Test fun defaultFocus_selectedThenNewThenFirstPlaceable() {
