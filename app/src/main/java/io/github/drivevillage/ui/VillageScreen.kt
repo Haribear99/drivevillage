@@ -57,6 +57,7 @@ import io.github.drivevillage.core.village.SceneLedger
 import io.github.drivevillage.core.village.QuestResponse
 import io.github.drivevillage.core.village.QuestStatus
 import io.github.drivevillage.core.village.VillageGrowth
+import kotlinx.coroutines.delay
 import kotlin.math.roundToLong
 
 private enum class Tab(val label: String, val short: String) { SCENE("여정 정산", "정산"), WORKSHOP("정비 공방", "정비"), MISSION("미션", "미션"), DECORATE("꾸미기", "꾸미기") }
@@ -83,8 +84,17 @@ fun VillageScreen(vm: VillageViewModel) {
     val needingCare = remember(state, odo, today) { Facilities.needingCare(state, odo, today) }
     // 시설을 눌렀을 때 마을 아래쪽에 올라오는 안내 시트(응답은 받지 않는다).
     var sheetFacility by remember { mutableStateOf<Facility?>(null) }
+    val facilitySheet: @Composable (Facility, Modifier) -> Unit = { f, m ->
+        FacilitySheet(
+            f, Facilities.hint(f, Facilities.waitingFor(f, state, odo, today)),
+            modifier = m,
+            onOpenWorkshop = { tab = Tab.WORKSHOP; sheetFacility = null },
+            onClose = { sheetFacility = null },
+        )
+    }
     // ── 마을 전경 ──
-    val villagePane: @Composable (Modifier) -> Unit = { paneModifier ->
+    // portrait = Pleos 1창(세로). 세로에서는 마을이 낮아 상단 바를 한 줄로 줄이고, 안내 시트는 패널 위쪽에 띄운다.
+    val villagePane: @Composable (Modifier, Boolean) -> Unit = { paneModifier, portrait ->
         BoxWithConstraints(paneModifier) {
             VillageCanvas(
                 modifier = Modifier.fillMaxSize(),
@@ -115,42 +125,45 @@ fun VillageScreen(vm: VillageViewModel) {
             }
             Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
                 // 상단 바: 제목 28sp, 상태 24sp, 버튼 64dp. 넓이가 모자라면 상태 항목이 줄바꿈된다.
+                // 세로: 제목·상태·버튼을 한 줄에 두고 상태는 두 항목만(글자 크기는 그대로, 항목 수를 줄인다).
+                val day = SceneLedger.villageDay(state, today)
                 Column(
-                    Modifier.fillMaxWidth().padding(10.dp).background(Color(0xB3141A26), RoundedCornerShape(16.dp))
+                    Modifier.fillMaxWidth().padding(if (portrait) 6.dp else 10.dp).background(Color(0xB3141A26), RoundedCornerShape(16.dp))
                         .pointerInput(Unit) { detectTapGestures { } } // 바 빈 곳을 눌러도 뒤의 시설이 눌리지 않게
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                        .padding(horizontal = 16.dp, vertical = if (portrait) 4.dp else 8.dp),
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text("DRIVE VILLAGE", color = VillageTheme.accent, style = VillageType.title, maxLines = 1, modifier = Modifier.weight(1f))
+                        if (portrait) {
+                            Text(listOfNotNull("마을 Lv.${VillageGrowth.level(state)}", day?.let { "${it}일째" }).joinToString(" · "), color = VillageTheme.text, style = VillageType.body, maxLines = 1)
+                        }
                         BarButton(if (voiceOn) "소리 켬" else "소리 끔", onClick = vm::toggleVoice)
                         BarButton("마을 닫기", onClick = vm::closeSilently)
                     }
-                    val day = SceneLedger.villageDay(state, today)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                        listOfNotNull("마을 Lv.${VillageGrowth.level(state)}", day?.let { "${it}일째" }, "공방 ${state.maintenance.workshopLevel}단계", "정차 중에만 열려요").forEach {
-                            Text(it, color = VillageTheme.text, style = VillageType.body, maxLines = 1)
+                    if (!portrait) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                            listOfNotNull("마을 Lv.${VillageGrowth.level(state)}", day?.let { "${it}일째" }, "공방 ${state.maintenance.workshopLevel}단계", "정차 중에만 열려요").forEach {
+                                Text(it, color = VillageTheme.text, style = VillageType.body, maxLines = 1)
+                            }
                         }
                     }
                 }
                 // 주민 말풍선(본문 24sp). 안내 시트가 떠 있는 동안은 가린다(작은 마을 화면에서 겹치지 않게).
+                // 세로에서는 시설을 가리기 쉬워 누르면 닫히고, 가만 두어도 6초 뒤 숨는다.
                 bubble?.takeIf { sheetFacility == null }?.let { b ->
+                    if (portrait) LaunchedEffect(b) { delay(BUBBLE_AUTO_HIDE_MS); vm.dismissBubble(b) }
                     Column(
                         Modifier.align(Alignment.CenterHorizontally).widthIn(max = 560.dp).padding(horizontal = 16.dp)
-                            .background(Color(0xF2FFF8EC), RoundedCornerShape(16.dp)).padding(16.dp),
+                            .background(Color(0xF2FFF8EC), RoundedCornerShape(16.dp))
+                            .then(if (portrait) Modifier.clickable(onClickLabel = "말풍선 닫기") { vm.dismissBubble(b) } else Modifier)
+                            .padding(16.dp),
                     ) {
                         Text("${b.resident.displayName} · ${b.resident.role}", color = Color(0xFF8A5A3A), fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.Bold)
                         Text(b.text, color = Color(0xFF2B2420), style = VillageType.body)
                     }
                 }
             }
-            sheetFacility?.let { f ->
-                FacilitySheet(
-                    f, Facilities.hint(f, Facilities.waitingFor(f, state, odo, today)),
-                    modifier = Modifier.align(Alignment.BottomCenter),
-                    onOpenWorkshop = { tab = Tab.WORKSHOP; sheetFacility = null },
-                    onClose = { sheetFacility = null },
-                )
-            }
+            if (!portrait) sheetFacility?.let { f -> facilitySheet(f, Modifier.align(Alignment.BottomCenter)) }
             if (blocked) {
                 Text(
                     "저장 장치를 확인할 수 없어 이번에는 기록을 저장하지 않아요.", color = Color.White, fontSize = 13.sp,
@@ -160,9 +173,9 @@ fun VillageScreen(vm: VillageViewModel) {
         }
     }
     // ── 패널 ──
-    val panelPane: @Composable (Modifier) -> Unit = { paneModifier ->
+    val panelPane: @Composable (Modifier, Boolean) -> Unit = { paneModifier, portrait -> Box(paneModifier) {
         Column(
-            paneModifier.panelSurface().padding(start = Dimens.edge, end = Dimens.edge, top = Dimens.edge),
+            Modifier.fillMaxSize().panelSurface().padding(start = Dimens.edge, end = Dimens.edge, top = Dimens.edge),
             verticalArrangement = Arrangement.spacedBy(Dimens.gap),
         ) {
             // 탭 바: 한 줄 4칸, 높이 64dp, 사이 24dp. 라벨은 2~3자로 줄여 24sp를 지킨다.
@@ -187,26 +200,33 @@ fun VillageScreen(vm: VillageViewModel) {
                     Tab.SCENE -> ScenePanel(vm, state, open, today)
                     Tab.WORKSHOP -> WorkshopPanel(vm, state, odo, today)
                     Tab.MISSION -> MissionPanel(state, today)
-                    Tab.DECORATE -> DecoratePanel(state, selectedMaterial) { selectedMaterial = it }
+                    Tab.DECORATE -> DecoratePanel(vm, state, open, selectedMaterial) { selectedMaterial = it }
                 }
             }
         }
-    }
+        // 세로: 안내 시트를 패널 위쪽에 띄워 마을(누른 시설)을 가리지 않는다.
+        if (portrait) sheetFacility?.let { f -> facilitySheet(f, Modifier.align(Alignment.TopCenter)) }
+    } }
     // Pleos 1창(세로)에서는 위아래로, 2창(가로)에서는 좌우로 놓는다. 방향은 강제하지 않는다.
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (maxHeight > maxWidth) {
             Column(Modifier.fillMaxSize()) {
-                villagePane(Modifier.weight(1f).fillMaxWidth())
-                panelPane(Modifier.weight(1.3f).fillMaxWidth())
+                villagePane(Modifier.weight(1f).fillMaxWidth(), true)
+                panelPane(Modifier.weight(PORTRAIT_PANEL_WEIGHT).fillMaxWidth(), true)
             }
         } else {
             Row(Modifier.fillMaxSize()) {
-                villagePane(Modifier.weight(1.25f).fillMaxHeight())
-                panelPane(Modifier.weight(1f).fillMaxHeight())
+                villagePane(Modifier.weight(1.25f).fillMaxHeight(), false)
+                panelPane(Modifier.weight(1f).fillMaxHeight(), false)
             }
         }
     }
 }
+
+/** 세로 화면의 마을:패널 높이 비율(마을 1). */
+private const val PORTRAIT_PANEL_WEIGHT = 1.3f
+/** 세로 화면에서 말풍선이 스스로 숨기까지(ms). */
+private const val BUBBLE_AUTO_HIDE_MS = 6_000L
 
 /** 마을 상단 바 버튼: 높이 64dp 이상, 24sp. 짙은 바 위라 크림 테두리·글자. */
 @Composable
@@ -255,7 +275,6 @@ private fun PanelTab(t: Tab, selected: Boolean, modifier: Modifier, onClick: () 
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ScenePanel(vm: VillageViewModel, state: AppState, open: OpenResult, today: Long) {
     when (open) {
@@ -285,58 +304,9 @@ private fun ScenePanel(vm: VillageViewModel, state: AppState, open: OpenResult, 
             )
         }
         is OpenResult.Scene -> {
+            // 헤더 → 거리 → 재료 칩 → 도장 → 기억 태그(연출 포함, SettleCard.kt). 그 아래 일기, 누적 순.
             val rec = state.ledger.scenes.firstOrNull { it.eventId == open.record.eventId } ?: open.record
-            HeroCard {
-                CardTitle("지난번 이후의 여정")
-                val days = vm.elapsedDays(rec)
-                val since = rec.sinceMillis?.let { SceneLedger.dateLabel(SceneLedger.epochDay(it, java.time.ZoneId.systemDefault())) }
-                // 날짜와 기간은 따로 한 줄씩(24sp에서 한 줄 약 15자)
-                CardBody(SceneLedger.dateLabel(rec.epochDay), VillageTheme.inkSub)
-                CardBody(
-                    when {
-                        since == null || days == null -> "마을 시작 이후"
-                        days == 0 -> "오늘 앞선 정산 이후"
-                        else -> "지난번($since) 이후 ${days}일"
-                    },
-                    VillageTheme.inkSub,
-                )
-                Row {
-                    Text("${kotlin.math.floor(rec.deltaKm).toLong()}km", color = VillageTheme.ink, style = VillageType.display, modifier = Modifier.alignByBaseline())
-                    Text(" 달렸어요", color = VillageTheme.ink, style = VillageType.body, modifier = Modifier.alignByBaseline())
-                }
-                if (open.milestonesCrossed > 0) CardBody("1,000km 이정표 ${open.milestonesCrossed}개를 넘었어요.", VillageTheme.inkOk, VillageType.bodyStrong)
-                if (open.monumentsGranted > 0) CardBody("이정표 기념물 ${open.monumentsGranted}개를 세웠어요.", VillageTheme.inkOk, VillageType.bodyStrong)
-                if (open.monumentsPending > 0) {
-                    CardBody("기념물은 한 번에 ${SceneLedger.MAX_MILESTONES_PER_SETTLEMENT}개까지라 ${open.monumentsPending}개는 다음 정산 때 세워요(사라지지 않아요).", VillageTheme.inkSub)
-                }
-                if (open.newMaterials.isNotEmpty()) {
-                    CardBody("이번에 받은 것", style = VillageType.bodyStrong)
-                    state.materials.filter { m -> open.newMaterials.any { it.id == m.id } }.forEach { CardBody("${it.kind.label} : ${it.tag}") }
-                }
-                if (open.alreadyGotToday) CardBody("재료는 하루 한 번이라 이번에는 이미 받았어요. 이 여정은 일기에 남겨요.", VillageTheme.inkSub)
-                open.missionDone?.let { CardBody("미션 도장: ${it.title}", VillageTheme.inkOk, VillageType.bodyStrong) }
-            }
-            PaperCard {
-                CardTitle("이번 여정의 한 줄")
-                CardBody("고르면 받은 것의 기억 태그가 돼요.", VillageTheme.inkSub)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(Dimens.gap), verticalArrangement = Arrangement.spacedBy(Dimens.gap)) {
-                    SceneLedger.TAG_PRESETS.forEach { tag ->
-                        if (rec.tag == tag) InkButton(tag, selected = true, padH = Dimens.buttonPadCompact) {}
-                        else InkButton(tag, padH = Dimens.buttonPadCompact) { vm.chooseTag(rec.eventId, tag) }
-                    }
-                }
-            }
-            PaperCard {
-                val total = state.ledger.sceneKm
-                val toNext = SceneLedger.MILESTONE_KM - (total % SceneLedger.MILESTONE_KM)
-                CardTitle("누적 ${kotlin.math.floor(total).toLong()}km")
-                CardBody("이정표 ${state.ledger.milestonesCounted}개", VillageTheme.inkSub)
-                CardBody("다음 이정표까지 약 ${kotlin.math.ceil(toNext).toLong()}km", VillageTheme.inkSub)
-                MoreInfo(
-                    "정산은 이렇게 해요",
-                    "앱을 안 연 날이 있어도 달린 거리·넘은 이정표의 기념물·정비 부탁은 사라지지 않고 다음 정산에 합쳐져요. 재료만은 정산할 때 하루 하나예요.",
-                )
-            }
+            SceneSettleCards(vm, open, rec)
         }
     }
     val diary = state.ledger.scenes.takeLast(3).reversed()
@@ -346,6 +316,19 @@ private fun ScenePanel(vm: VillageViewModel, state: AppState, open: OpenResult, 
             diary.forEach { s ->
                 CardBody("${SceneLedger.dateLabel(s.epochDay)} · ${kotlin.math.floor(s.deltaKm).toLong()}km${s.tag?.let { " · $it" } ?: ""}")
             }
+        }
+    }
+    if (open is OpenResult.Scene) {
+        PaperCard {
+            val total = state.ledger.sceneKm
+            val toNext = SceneLedger.MILESTONE_KM - (total % SceneLedger.MILESTONE_KM)
+            CardTitle("누적 ${kotlin.math.floor(total).toLong()}km")
+            CardBody("이정표 ${state.ledger.milestonesCounted}개", VillageTheme.inkSub)
+            CardBody("다음 이정표까지 약 ${kotlin.math.ceil(toNext).toLong()}km", VillageTheme.inkSub)
+            MoreInfo(
+                "정산은 이렇게 해요",
+                "앱을 안 연 날이 있어도 달린 거리·넘은 이정표의 기념물·정비 부탁은 사라지지 않고 다음 정산에 합쳐져요. 재료만은 정산할 때 하루 하나예요.",
+            )
         }
     }
 }
@@ -549,35 +532,6 @@ private fun MissionPanel(state: AppState, today: Long) {
         PaperCard {
             CardTitle("모은 도장")
             stamps.forEach { s -> CardBody("${SceneLedger.dateLabel(s.epochDay)} · ${Missions.titleOf(s.missionId)}") }
-        }
-    }
-}
-
-@Composable
-private fun DecoratePanel(state: AppState, selected: String?, onSelect: (String?) -> Unit) {
-    val unplaced = state.materials.filter { it.placedSlot == null }
-    val placedCount = state.materials.count { it.placedSlot != null }
-    HeroCard {
-        CardTitle("마을 꾸미기")
-        CardBody("재료·기념물·장식을 하나 고른 뒤 마을의 빈 자리(점선 원)를 누르면 놓여요.")
-        CardBody("놓인 것을 누르면 그날의 기억이 보여요.", VillageTheme.inkSub)
-        CardBody("놓인 것 $placedCount / ${io.github.drivevillage.core.village.Decoration.SLOT_COUNT}자리", style = VillageType.bodyStrong)
-    }
-    if (unplaced.isEmpty()) {
-        PaperCard { CardBody("놓을 것이 없어요. 여정 정산(하루 한 번 재료), 1,000km 이정표, 새 계절로 생겨요.", VillageTheme.inkSub) }
-    }
-    unplaced.forEach { m ->
-        val isSel = m.id == selected
-        PaperCard {
-            Row(horizontalArrangement = Arrangement.spacedBy(Dimens.gap), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    CardBody(m.kind.label, style = VillageType.bodyStrong)
-                    CardBody(m.tag, VillageTheme.inkSub)
-                }
-                InkButton(if (isSel) "취소" else "고르기", selected = isSel) { onSelect(if (isSel) null else m.id) }
-            }
-            // 고른 상태는 색이 아니라 문구로도 알린다.
-            if (isSel) CardBody("골랐어요. 마을의 빈 자리를 눌러 주세요.", VillageTheme.inkOk, VillageType.bodyStrong)
         }
     }
 }

@@ -20,11 +20,13 @@ import io.github.drivevillage.core.village.LineContext
 import io.github.drivevillage.core.village.LineGenerator
 import io.github.drivevillage.core.village.Maintenance
 import io.github.drivevillage.core.village.Material
+import io.github.drivevillage.core.village.MaterialBook
 import io.github.drivevillage.core.village.MissionDef
 import io.github.drivevillage.core.village.OdometerReading
 import io.github.drivevillage.core.village.QuestDef
 import io.github.drivevillage.core.village.QuestResponse
 import io.github.drivevillage.core.village.Resident
+import io.github.drivevillage.core.village.RevealOnce
 import io.github.drivevillage.core.village.SceneLedger
 import io.github.drivevillage.core.village.SceneRecord
 import io.github.drivevillage.core.village.SceneResult
@@ -325,6 +327,18 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun dismissNotice() { _notice.value = null }
+
+    /** 말풍선 닫기(탭·자동 숨김). 그 사이 다른 말풍선으로 바뀌었으면 건드리지 않는다. */
+    fun dismissBubble(b: Bubble) { _bubble.compareAndSet(b, null) }
+
+    // ── 화면 연출 1회 기록(UI 상태, 저장하지 않음). 같은 정산·같은 아이템으로는 연출을 되풀이하지 않는다. ──
+    private val revealedScenes = HashSet<String>()
+    private val shimmeredMaterials = HashSet<String>()
+
+    fun sceneRevealPending(eventId: String, reduceMotion: Boolean): Boolean = RevealOnce.shouldPlay(eventId, revealedScenes, reduceMotion)
+    fun markSceneRevealed(eventId: String) { revealedScenes += eventId }
+    fun shimmerPending(newMaterials: List<Material>, reduceMotion: Boolean) = MaterialBook.shimmerKinds(newMaterials, shimmeredMaterials, reduceMotion)
+    fun markShimmered(newMaterials: List<Material>) { newMaterials.forEach { shimmeredMaterials += it.id } }
 
     private fun lastSceneTodayKm(st: AppState): Double? = st.ledger.scenes.lastOrNull { it.epochDay == today() }?.deltaKm
 

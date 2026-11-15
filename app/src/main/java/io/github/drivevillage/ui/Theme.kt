@@ -23,6 +23,8 @@ object VillageTheme {
     val inkWarn = Color(0xFF9A3324)   // 6.37:1
     val inkDue = Color(0xFF7A4B00)    // 6.46:1
     val stitch = Color(0xFFB9AE95)    // 장식선(정보 아님)
+    val tile = Color(0xFFE8DFCB)      // 크림 카드 안의 칸·칩 바탕(ink 약 12:1)
+    val silhouette = Color(0xFF9C9179) // 도감의 아직 못 만난 재료(단색 실루엣, 장식)
 
     @Composable
     operator fun invoke(content: @Composable () -> Unit) {
