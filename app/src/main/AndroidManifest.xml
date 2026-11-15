@@ -16,8 +16,10 @@
         </intent>
     </queries>
 
+    <!-- 게임 분류 선언(https://developer.android.com/training/cars/parked/games). 주행 중 화면·소리 0 규칙은 그대로 따른다. -->
     <application
         android:allowBackup="false"
+        android:appCategory="game"
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"

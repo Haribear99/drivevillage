@@ -33,6 +33,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.TransformOrigin
@@ -48,6 +49,8 @@ import io.github.drivevillage.core.village.MaterialBook
 import io.github.drivevillage.core.village.SceneLedger
 import io.github.drivevillage.core.village.SceneRecord
 import io.github.drivevillage.core.village.SettleReveal
+import io.github.drivevillage.core.voice.Sfx
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -102,6 +105,14 @@ internal fun SceneSettleCards(vm: VillageViewModel, open: OpenResult.Scene, rec:
         vm.markSceneRevealed(id) // 탭을 옮겼다 와도, 회전해도 같은 정산은 다시 재생하지 않는다.
         if (play) clock.animateTo(total.toFloat(), tween(total.toInt(), easing = LinearEasing))
         clock.snapTo(end)
+    }
+    // 정산 차임: 연출이 재생되는 정산에서 도장이 찍히기 시작하는 순간 한 번(눌러 건너뛰면 그 순간). 애니메이션 끄기면 연출이 없어 울리지 않는다.
+    val sfx = LocalSfx.current
+    LaunchedEffect(id, play, stamp) {
+        if (!play || stamp == null) return@LaunchedEffect
+        val at = SettleReveal.stampStartMs(chips.size).toFloat()
+        snapshotFlow { clock.value >= at }.first { it }
+        sfx(Sfx.CHIME)
     }
     val skip: () -> Unit = { if (clock.value < end) scope.launch { clock.snapTo(end) } }
     val t = clock.value.toLong()

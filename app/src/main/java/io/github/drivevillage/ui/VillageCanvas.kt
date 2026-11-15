@@ -209,6 +209,16 @@ private fun facilitySpots(a: VillageArt, w: Float, h: Float, u: Float, workshopL
     )
 }
 
+/** 말풍선이 피해야 할 자리: 시설(몸체 + 회전 원) + 공방 굴뚝 연기가 오르는 칸. 그리기·탭 판정과 같은 [facilitySpots] 값을 쓴다. */
+internal fun villageObstacles(a: VillageArt, w: Float, h: Float, workshopLevel: Int): List<Rect> {
+    val u = min(w, h)
+    val spots = facilitySpots(a, w, h, u, workshopLevel)
+    val fr = spots[2].rect // 공방
+    val ex = fr.left + fr.width * 0.56f
+    val ey = fr.top + fr.height * 0.06f
+    return spots.map { it.rect } + Rect(ex - u * 0.03f, ey - u * 0.15f, ex + u * 0.09f, ey) // drawSmoke의 퍼프 범위
+}
+
 /** 시설을 그린다. 회전체가 있으면 몸체 위에 [rotorDeg]만큼 돌려 겹친다(쉬는 중이면 각도는 멈춘 값). */
 private fun DrawScope.drawSpot(s: FacilitySpot, rest: Boolean, rotorDeg: Float = 0f) {
     drawImage(

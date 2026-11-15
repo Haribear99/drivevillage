@@ -1,6 +1,7 @@
 package io.github.drivevillage.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,7 +22,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -32,21 +32,30 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.drivevillage.core.village.AppState
+import io.github.drivevillage.core.village.Area
+import io.github.drivevillage.core.village.BubblePlace
+import io.github.drivevillage.core.village.BubblePlacement
+import io.github.drivevillage.core.village.BubbleSide
 import io.github.drivevillage.core.village.DueBy
 import io.github.drivevillage.core.village.Facilities
 import io.github.drivevillage.core.village.Facility
@@ -57,7 +66,9 @@ import io.github.drivevillage.core.village.SceneLedger
 import io.github.drivevillage.core.village.QuestResponse
 import io.github.drivevillage.core.village.QuestStatus
 import io.github.drivevillage.core.village.VillageGrowth
+import io.github.drivevillage.core.voice.Sfx
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
 private enum class Tab(val label: String, val short: String) { SCENE("여정 정산", "정산"), WORKSHOP("정비 공방", "정비"), MISSION("미션", "미션"), DECORATE("꾸미기", "꾸미기") }
@@ -76,6 +87,7 @@ fun VillageScreen(vm: VillageViewModel) {
     val blocked by vm.writesBlocked.collectAsState()
     var tab by remember { mutableStateOf(if (state.maintenance.setup == null && open !is OpenResult.Scene) Tab.WORKSHOP else Tab.SCENE) }
     var selectedMaterial by remember { mutableStateOf<String?>(null) }
+    val sfx = LocalSfx.current
     // 여정 정산이 생기면 그 카드를 먼저 보여 준다.
     LaunchedEffect(open) { if (open is OpenResult.Scene) tab = Tab.SCENE }
     val today = vm.today()
@@ -103,16 +115,16 @@ fun VillageScreen(vm: VillageViewModel) {
                 needingCare = needingCare,
                 placed = state.materials.filter { it.placedSlot != null },
                 highlightSlots = selectedMaterial != null,
-                onResident = vm::tapResident,
+                onResident = { vm.tapResident(it); sfx(Sfx.TAP) },
                 onSlot = { slot ->
                     val sel = selectedMaterial
                     val placed = state.materials.firstOrNull { it.placedSlot == slot }
                     when {
-                        placed != null -> vm.showMaterialMemory(placed)
-                        sel != null -> { vm.place(sel, slot); selectedMaterial = null }
+                        placed != null -> { vm.showMaterialMemory(placed); sfx(Sfx.TAP) }
+                        sel != null -> { vm.place(sel, slot); selectedMaterial = null } // 놓는 소리는 저장 뒤 vm이 낸다
                     }
                 },
-                onFacility = { sheetFacility = it },
+                onFacility = { sheetFacility = it; sfx(Sfx.TAP) },
                 wake = wake,
             )
             // 주민 이름표(20sp): 발밑 가운데
@@ -123,7 +135,9 @@ fun VillageScreen(vm: VillageViewModel) {
                         .background(Color(0x99000000), RoundedCornerShape(8.dp)).padding(horizontal = 7.dp, vertical = 2.dp),
                 )
             }
-            Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
+            // 상단 바 아래쪽 경계(말풍선이 바 밑으로 들어가지 않게).
+            var barBottomPx by remember { mutableFloatStateOf(0f) }
+            Column(Modifier.align(Alignment.TopCenter).fillMaxWidth().onSizeChanged { barBottomPx = it.height.toFloat() }) {
                 // 상단 바: 제목 28sp, 상태 24sp, 버튼 64dp. 넓이가 모자라면 상태 항목이 줄바꿈된다.
                 // 세로: 제목·상태·버튼을 한 줄에 두고 상태는 두 항목만(글자 크기는 그대로, 항목 수를 줄인다).
                 val day = SceneLedger.villageDay(state, today)
@@ -148,20 +162,12 @@ fun VillageScreen(vm: VillageViewModel) {
                         }
                     }
                 }
-                // 주민 말풍선(본문 24sp). 안내 시트가 떠 있는 동안은 가린다(작은 마을 화면에서 겹치지 않게).
-                // 세로에서는 시설을 가리기 쉬워 누르면 닫히고, 가만 두어도 6초 뒤 숨는다.
-                bubble?.takeIf { sheetFacility == null }?.let { b ->
-                    if (portrait) LaunchedEffect(b) { delay(BUBBLE_AUTO_HIDE_MS); vm.dismissBubble(b) }
-                    Column(
-                        Modifier.align(Alignment.CenterHorizontally).widthIn(max = 560.dp).padding(horizontal = 16.dp)
-                            .background(Color(0xF2FFF8EC), RoundedCornerShape(16.dp))
-                            .then(if (portrait) Modifier.clickable(onClickLabel = "말풍선 닫기") { vm.dismissBubble(b) } else Modifier)
-                            .padding(16.dp),
-                    ) {
-                        Text("${b.resident.displayName} · ${b.resident.role}", color = Color(0xFF8A5A3A), fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.Bold)
-                        Text(b.text, color = Color(0xFF2B2420), style = VillageType.body)
-                    }
-                }
+            }
+            // 주민 말풍선(본문 24sp): 말하는 주민 곁의 작은 말풍선(꼬리 포함, 폭 제한). 시설을 가장 덜 가리는 쪽에 붙는다.
+            // 안내 시트가 떠 있는 동안은 가린다. 가로·세로 모두 누르면 닫히고, 가만 두어도 6초 뒤 숨는다.
+            bubble?.takeIf { sheetFacility == null }?.let { b ->
+                LaunchedEffect(b) { delay(BUBBLE_AUTO_HIDE_MS); vm.dismissBubble(b) }
+                SpeechBubble(b, barBottomPx, state.maintenance.workshopLevel) { vm.dismissBubble(b) }
             }
             if (!portrait) sheetFacility?.let { f -> facilitySheet(f, Modifier.align(Alignment.BottomCenter)) }
             if (blocked) {
@@ -225,14 +231,105 @@ fun VillageScreen(vm: VillageViewModel) {
 
 /** 세로 화면의 마을:패널 높이 비율(마을 1). */
 private const val PORTRAIT_PANEL_WEIGHT = 1.3f
-/** 세로 화면에서 말풍선이 스스로 숨기까지(ms). */
+/** 말풍선이 스스로 숨기까지(ms, 가로·세로 공통). */
 private const val BUBBLE_AUTO_HIDE_MS = 6_000L
+
+private val BUBBLE_FILL = Color(0xF2FFF8EC)
+private val BUBBLE_MAX_W = 340.dp
+private val BUBBLE_MAX_W_WIDE = 720.dp
+private val BUBBLE_TAIL = 14.dp
+private val BUBBLE_RADIUS = 16.dp
+
+/**
+ * 말하는 주민 곁의 작은 말풍선. 마을 칸 전체를 덮는 레이아웃이지만 말풍선 카드만 누를 수 있다(나머지 누름은 마을로 간다).
+ * 자리는 [BubblePlacement]가 고르고(시설 자리는 [villageObstacles]), 꼬리는 그리기 단계에서만 방향을 읽는다.
+ */
+@Composable
+private fun SpeechBubble(b: Bubble, barBottomPx: Float, workshopLevel: Int, onDismiss: () -> Unit) {
+    val art = rememberVillageArt()
+    val place = remember { mutableStateOf<BubblePlace?>(null) }
+    val fill = BUBBLE_FILL
+    Layout(
+        modifier = Modifier.fillMaxSize(),
+        content = {
+            Column(
+                Modifier.background(fill, RoundedCornerShape(BUBBLE_RADIUS))
+                    .clickable(onClickLabel = "말풍선 닫기", onClick = onDismiss)
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+            ) {
+                Text("${b.resident.displayName} · ${b.resident.role}", color = Color(0xFF8A5A3A), fontSize = 20.sp, lineHeight = 24.sp, fontWeight = FontWeight.Bold)
+                Text(b.text, color = Color(0xFF2B2420), style = VillageType.body)
+            }
+            Canvas(Modifier) {
+                val p = place.value ?: return@Canvas
+                val s = size.width
+                val tri = Path().apply {
+                    when (p.side) { // 꼬리 끝이 주민 쪽을 가리킨다
+                        BubbleSide.ABOVE -> { moveTo(0f, 0f); lineTo(s, 0f); lineTo(s / 2, s) }
+                        BubbleSide.BELOW -> { moveTo(0f, s); lineTo(s, s); lineTo(s / 2, 0f) }
+                        BubbleSide.RIGHT -> { moveTo(s, 0f); lineTo(s, s); lineTo(0f, s / 2) }
+                        BubbleSide.LEFT -> { moveTo(0f, 0f); lineTo(0f, s); lineTo(s, s / 2) }
+                    }
+                    close()
+                }
+                drawPath(tri, fill)
+            }
+        },
+    ) { measurables, constraints ->
+        val w = constraints.maxWidth.toFloat()
+        val h = constraints.maxHeight.toFloat()
+        // 가로(2창)의 마을 칸은 좁고 높아 폭을 줄이고, 세로(1창)의 마을 칸은 넓고 낮아 폭을 넓혀 줄 수(높이)를 줄인다.
+        // 세로 마을은 주민 발밑 땅이 낮아 한두 줄 말풍선만 시설을 덮지 않고 들어간다.
+        val wide = w > h * 1.3f
+        val maxW = (if (wide) minOf(BUBBLE_MAX_W_WIDE.toPx(), w * 0.92f) else minOf(BUBBLE_MAX_W.toPx(), w * 0.62f)).toInt().coerceAtLeast(1)
+        val card = measurables[0].measure(Constraints(maxWidth = maxW))
+        val tailPx = BUBBLE_TAIL.roundToPx()
+        val tail = measurables[1].measure(Constraints.fixed(tailPx, tailPx))
+        val u = minOf(w, h)
+        // 주민 스프라이트·이름표 자리(VillageCanvas의 residentSprite, 이름표 오프셋과 같은 값).
+        fun spriteBox(r: Resident): Area {
+            val o = VillageLayout.residents.getValue(r)
+            val sh = u * 0.17f
+            val img = art?.npc?.get(r)
+            val sw = if (img != null) sh * img.width / img.height else sh * 0.6f
+            return Area(o.x * w - sw / 2, o.y * h - sh, o.x * w + sw / 2, o.y * h)
+        }
+        fun labelBox(r: Resident): Area {
+            val o = VillageLayout.residents.getValue(r)
+            return Area(o.x * w - 27.dp.toPx(), o.y * h + 2.dp.toPx(), o.x * w + 27.dp.toPx(), o.y * h + 30.dp.toPx())
+        }
+        val facilities = art?.let { villageObstacles(it, w, h, workshopLevel).map { r -> Area(r.left, r.top, r.right, r.bottom) } }.orEmpty()
+        val others = Resident.entries.filter { it != b.resident }.flatMap { listOf(spriteBox(it), labelBox(it)) }
+        val edge = 8.dp.toPx()
+        val chosen = BubblePlacement.choose(
+            card.width.toFloat(), card.height.toFloat(),
+            spriteBox(b.resident), labelBox(b.resident),
+            Area(edge, barBottomPx + 4.dp.toPx(), w - edge, h - edge),
+            gap = tailPx.toFloat(), tailMargin = BUBBLE_RADIUS.toPx() + tailPx / 2f,
+            facilities = facilities, others = others,
+        )
+        if (place.value != chosen) place.value = chosen
+        val bx = chosen.box
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            card.place(bx.l.roundToInt(), bx.t.roundToInt())
+            val (tx, ty) = when (chosen.side) {
+                BubbleSide.ABOVE -> chosen.tail - tailPx / 2f to bx.b
+                BubbleSide.BELOW -> chosen.tail - tailPx / 2f to bx.t - tailPx
+                BubbleSide.RIGHT -> bx.l - tailPx to chosen.tail - tailPx / 2f
+                BubbleSide.LEFT -> bx.r to chosen.tail - tailPx / 2f
+            }
+            tail.place(tx.roundToInt(), ty.roundToInt())
+        }
+    }
+}
 
 /** 마을 상단 바 버튼: 높이 64dp 이상, 24sp. 짙은 바 위라 크림 테두리·글자. */
 @Composable
 private fun BarButton(text: String, onClick: () -> Unit) {
+    val sfx = LocalSfx.current
+    // 소리를 끄는 누름·마을 닫기는 누른 뒤의 조건(소리 끔·래치)에 걸려 소리가 나지 않는다.
     OutlinedButton(
-        onClick = onClick, modifier = Modifier.heightIn(min = Dimens.touch), shape = RoundedCornerShape(Dimens.buttonRadius),
+        onClick = { onClick(); sfx(Sfx.TAP) }, modifier = Modifier.heightIn(min = Dimens.touch), shape = RoundedCornerShape(Dimens.buttonRadius),
         contentPadding = PaddingValues(horizontal = Dimens.buttonPadCompact, vertical = Dimens.buttonPadV),
         border = BorderStroke(Dimens.outlineWidth, VillageTheme.text),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = VillageTheme.text),
@@ -255,7 +352,7 @@ private fun FacilitySheet(f: Facility, hint: String, modifier: Modifier, onOpenW
         Spacer(Modifier.height(Dimens.gap - Dimens.inner))
         ButtonRow {
             InkButton("정비 탭에서 보기", Modifier.weight(1.7f), selected = true, onClick = onOpenWorkshop)
-            InkButton("닫기", Modifier.weight(1f), onClick = onClose)
+            InkButton("닫기", Modifier.weight(1f), sound = Sfx.CANCEL, onClick = onClose)
         }
     }
 }
@@ -264,10 +361,11 @@ private fun FacilitySheet(f: Facility, hint: String, modifier: Modifier, onOpenW
 @Composable
 private fun PanelTab(t: Tab, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(Dimens.buttonRadius)
+    val sfx = LocalSfx.current
     Box(
         modifier.heightIn(min = Dimens.touch)
             .background(if (selected) VillageTheme.paper else VillageTheme.card, shape)
-            .clickable(role = Role.Tab, onClickLabel = t.label) { onClick() }
+            .clickable(role = Role.Tab, onClickLabel = t.label) { onClick(); sfx(Sfx.SELECT) }
             .semantics { this.selected = selected; contentDescription = t.label },
         contentAlignment = Alignment.Center,
     ) {
@@ -416,7 +514,7 @@ private fun QuestCard(vm: VillageViewModel, st: QuestStatus, currentOdo: Double?
                             else InkButton("이 정비 시점으로 기록", Modifier.fillMaxWidth(), selected = true, onClick = record)
                             ButtonRow {
                                 InkButton("지금으로 기록", Modifier.weight(1.6f)) { vm.respondQuest(st.def, QuestResponse.DONE) }
-                                InkButton("취소", Modifier.weight(1f)) { doneOpen = false }
+                                InkButton("취소", Modifier.weight(1f), sound = Sfx.CANCEL) { doneOpen = false }
                             }
                         }
                     }
@@ -486,7 +584,7 @@ private fun SetupForm(vm: VillageViewModel, state: AppState, odo: Double?, today
     }
     ButtonRow {
         PrimaryButton("저장", Modifier.weight(1f)) { vm.saveSetup(preset, lastKm, lastDay, oilKm, oilMonths, unknown); onDone() }
-        if (prev != null) GhostButton("취소", Modifier.weight(1f), onClick = onDone)
+        if (prev != null) GhostButton("취소", Modifier.weight(1f), sound = Sfx.CANCEL, onClick = onDone)
     }
 }
 

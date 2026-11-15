@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import io.github.drivevillage.core.village.AppState
 import io.github.drivevillage.core.village.Decoration
 import io.github.drivevillage.core.village.MaterialBook
+import io.github.drivevillage.core.voice.Sfx
 
 private val silhouetteFilter = ColorFilter.tint(VillageTheme.silhouette, BlendMode.SrcIn)
 
@@ -67,6 +68,7 @@ internal fun DecoratePanel(vm: VillageViewModel, state: AppState, open: OpenResu
     val art = rememberVillageArt()
     val placedCount = state.materials.count { it.placedSlot != null }
     val slotsFull = placedCount >= Decoration.SLOT_COUNT
+    val sfx = LocalSfx.current
 
     // 칸을 누르면 아래 카드가 보이도록 패널을 필요한 만큼만 올린다(가로 패널은 격자와 카드가 한 화면에 다 들어가지 않는다).
     val detailView = remember { BringIntoViewRequester() }
@@ -94,6 +96,7 @@ internal fun DecoratePanel(vm: VillageViewModel, state: AppState, open: OpenResu
                                 if (!chosen) onSelect(null)
                                 focus = e.kind
                                 taps++
+                                sfx(Sfx.SELECT)
                             }
                         }
                     }
@@ -122,11 +125,11 @@ internal fun DecoratePanel(vm: VillageViewModel, state: AppState, open: OpenResu
                     // 고른 상태는 색이 아니라 문구로도 알린다.
                     chosen != null -> {
                         CardBody("골랐어요. 마을의 빈 자리를 눌러 주세요.", VillageTheme.inkOk, VillageType.bodyStrong)
-                        InkButton("고르기 취소", Modifier.fillMaxWidth()) { onSelect(null) }
+                        InkButton("고르기 취소", Modifier.fillMaxWidth(), sound = Sfx.CANCEL) { onSelect(null) }
                     }
                     slotsFull -> CardBody("마을의 ${Decoration.SLOT_COUNT}자리가 모두 찼어요.", VillageTheme.inkSub)
                     else -> ButtonRow {
-                        PrimaryButton("마을에 놓기", Modifier.weight(1f)) { onSelect(m.id); taps++ }
+                        PrimaryButton("마을에 놓기", Modifier.weight(1f), sound = Sfx.SELECT) { onSelect(m.id); taps++ }
                         if (e.unplaced.size > 1) InkButton("다른 기억", Modifier.weight(1f)) { pick++ }
                     }
                 }

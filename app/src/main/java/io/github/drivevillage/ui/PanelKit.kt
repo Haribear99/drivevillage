@@ -41,6 +41,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import io.github.drivevillage.core.voice.Sfx
 
 /*
  * 패널 재질 규칙(화면당 재질 효과 2개 이하):
@@ -118,25 +119,28 @@ private val buttonPad = PaddingValues(horizontal = Dimens.buttonPadH, vertical =
 
 /** 화면당 하나만: 앰버 CTA. */
 @Composable
-fun PrimaryButton(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun PrimaryButton(text: String, modifier: Modifier = Modifier, sound: Sfx = Sfx.TAP, onClick: () -> Unit) {
+    val sfx = LocalSfx.current
     Button(
-        onClick = onClick, modifier = modifier.heightIn(min = Dimens.touch), shape = buttonShape, contentPadding = buttonPad,
+        onClick = { onClick(); sfx(sound) }, modifier = modifier.heightIn(min = Dimens.touch), shape = buttonShape, contentPadding = buttonPad,
         colors = ButtonDefaults.buttonColors(containerColor = VillageTheme.accent, contentColor = VillageTheme.ink),
     ) { Text(text, style = VillageType.label, textAlign = TextAlign.Center) }
 }
 
 /** 크림 카드 위의 보조 버튼(네이비 테두리). selected면 네이비로 채운다(선택 칩). */
 @Composable
-fun InkButton(text: String, modifier: Modifier = Modifier, selected: Boolean = false, padH: Dp = Dimens.buttonPadH, onClick: () -> Unit) {
+fun InkButton(text: String, modifier: Modifier = Modifier, selected: Boolean = false, padH: Dp = Dimens.buttonPadH, sound: Sfx = Sfx.TAP, onClick: () -> Unit) {
     val pad = PaddingValues(horizontal = padH, vertical = Dimens.buttonPadV)
+    val sfx = LocalSfx.current
+    val click = { onClick(); sfx(sound) }
     if (selected) {
         Button(
-            onClick = onClick, modifier = modifier.heightIn(min = Dimens.touch), shape = buttonShape, contentPadding = pad,
+            onClick = click, modifier = modifier.heightIn(min = Dimens.touch), shape = buttonShape, contentPadding = pad,
             colors = ButtonDefaults.buttonColors(containerColor = VillageTheme.ink, contentColor = VillageTheme.paper),
         ) { Text(text, style = VillageType.label, textAlign = TextAlign.Center) }
     } else {
         OutlinedButton(
-            onClick = onClick, modifier = modifier.heightIn(min = Dimens.touch), shape = buttonShape, contentPadding = pad,
+            onClick = click, modifier = modifier.heightIn(min = Dimens.touch), shape = buttonShape, contentPadding = pad,
             border = BorderStroke(Dimens.outlineWidth, VillageTheme.ink),
             colors = ButtonDefaults.outlinedButtonColors(contentColor = VillageTheme.ink),
         ) { Text(text, style = VillageType.label, textAlign = TextAlign.Center) }
@@ -145,9 +149,10 @@ fun InkButton(text: String, modifier: Modifier = Modifier, selected: Boolean = f
 
 /** 네이비 패널 위(카드 밖)의 보조 버튼: 크림 테두리 + 크림 글자. */
 @Composable
-fun GhostButton(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun GhostButton(text: String, modifier: Modifier = Modifier, sound: Sfx = Sfx.TAP, onClick: () -> Unit) {
+    val sfx = LocalSfx.current
     OutlinedButton(
-        onClick = onClick, modifier = modifier.heightIn(min = Dimens.touch), shape = buttonShape, contentPadding = buttonPad,
+        onClick = { onClick(); sfx(sound) }, modifier = modifier.heightIn(min = Dimens.touch), shape = buttonShape, contentPadding = buttonPad,
         border = BorderStroke(Dimens.outlineWidth, VillageTheme.text),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = VillageTheme.text),
     ) { Text(text, style = VillageType.label, textAlign = TextAlign.Center) }
@@ -171,11 +176,12 @@ fun ButtonRow(content: @Composable androidx.compose.foundation.layout.RowScope.(
 @Composable
 fun MoreInfo(label: String, text: String) {
     var open by rememberSaveable(label, text) { mutableStateOf(false) }
+    val sfx = LocalSfx.current
     Column(verticalArrangement = Arrangement.spacedBy(Dimens.inner)) {
         Row(
             Modifier.fillMaxWidth().heightIn(min = Dimens.touch)
                 .border(Dimens.outlineWidth, VillageTheme.inkSub, buttonShape)
-                .clickable(role = Role.Button) { open = !open }
+                .clickable(role = Role.Button) { open = !open; sfx(Sfx.TAP) }
                 .padding(horizontal = Dimens.buttonPadH),
             verticalAlignment = Alignment.CenterVertically,
         ) {

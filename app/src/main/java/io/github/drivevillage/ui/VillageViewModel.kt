@@ -34,6 +34,7 @@ import io.github.drivevillage.core.village.TemplateLineGenerator
 import io.github.drivevillage.core.village.TripSummary
 import io.github.drivevillage.core.village.VoiceOnce
 import io.github.drivevillage.core.village.josa
+import io.github.drivevillage.core.voice.Sfx
 import io.github.drivevillage.core.voice.VoiceGate
 import io.github.drivevillage.data.StateRepository
 import kotlinx.coroutines.CompletableDeferred
@@ -112,11 +113,17 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
     // ── 목소리(정차 중, 탑승·하차 한 문장씩) ──
     @Volatile private var voicePrefs: SharedPreferences? = null
     private val voicePrefLoaded = CompletableDeferred<Unit>()
+    /** 상단 바 '소리 켬/끔' 하나가 주민 음성과 효과음을 함께 켜고 끈다(저장 키는 예전 이름 그대로). */
     private val _voiceOn = MutableStateFlow(false) // 설정을 읽기 전에는 말하지 않는다
     val voiceOn: StateFlow<Boolean> = _voiceOn
-    private val voice = VillageVoice(app) {
+    /** 음성·효과음이 함께 쓰는 허용 조건(같은 fail-closed 규칙). */
+    private val soundAllowed: () -> Boolean = {
         foreground && !VoiceGate.mustStop(_screen.value, signals.safety.isTripped, _voiceOn.value)
     }
+    /** 앱 공용 오디오 포커스. 잃으면 모든 소리를 즉시 멈춘다. */
+    private val audioFocus = AppAudioFocus(app) { change -> stopAllSound("focus-lost-$change") }
+    private val voice = VillageVoice(app, audioFocus.shared, soundAllowed)
+    private val sfx = VillageSfx(app, audioFocus, soundAllowed)
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
@@ -132,7 +139,12 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
         }
         signals.start()
         // 래치가 걸리는 순간 그 스레드에서 바로 소리를 끊는다(메인 수집자를 기다리지 않음).
-        signals.safety.onTrip = { voice.stop("latch") }
+        signals.safety.onTrip = {
+            val t0 = SystemClock.elapsedRealtimeNanos()
+            voice.stop("latch")
+            sfx.stopAll("latch")
+            Log.i(TAG, "latch audio stop calls took ${(SystemClock.elapsedRealtimeNanos() - t0) / 1000}us")
+        }
         viewModelScope.launch { signals.gear.collect { onGate(gate.onGear(it)) } }
         viewModelScope.launch { signals.ux.collect { onGate(gate.onUx(it)) } }
         viewModelScope.launch { signals.safety.tripped.collect { if (it) onGate(gate.close()) } }
@@ -144,7 +156,7 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
     private fun onGate(next: Screen) {
         if (_screen.value == next) return
         _screen.value = next
-        if (next != Screen.VILLAGE) stopVoice("screen-$next")
+        if (next != Screen.VILLAGE) stopAllSound("screen-$next")
         Log.i(TAG, "screen=$next gear=${gate.gear} ux=${gate.ux} latch=${signals.safety.reason ?: "-"}")
         when (next) {
             Screen.VILLAGE -> {
@@ -251,6 +263,7 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
             if (update { Decoration.place(it, materialId, slot, today) }) {
                 val label = state.value.materials.firstOrNull { it.id == materialId }?.kind?.label ?: "재료"
                 _notice.value = "$label${josa(label, "을", "를")} ${slot + 1}번 자리에 놓았어요."
+                playSfx(Sfx.PLACE)
                 val st = state.value
                 _bubble.value = Bubble(Resident.GARDENER, lines.line(Resident.GARDENER, LineContext.CHAT, summary(lastSceneTodayKm(st), 0), chatSeed++))
             } else _notice.value = "그 자리에는 놓을 수 없어요."
@@ -302,6 +315,7 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
                 }.getOrDefault(false)
                 val greet = Bubble(lit.greeter, lit.wakeLine)
                 _wake.value = FacilityWake(lit, SystemClock.uptimeMillis())
+                playSfx(Sfx.LIGHT)
                 if (reduce) _bubble.value = greet
                 else {
                     _bubble.value = null
@@ -356,22 +370,30 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun stopVoice(reason: String) {
+    /** 음성(대기 중인 발화 포함)과 효과음을 모두 멈춘다. 어느 스레드에서 불러도 된다. */
+    private fun stopAllSound(reason: String) {
         speakJob?.cancel()
         voice.stop(reason)
+        sfx.stopAll(reason)
+    }
+
+    /** 효과음(메인 스레드). 마을 화면·전면·소리 켬일 때만 난다([VillageSfx]가 다시 확인한다). */
+    fun playSfx(s: Sfx) {
+        if (!inVillage() || !foreground) return
+        sfx.play(s)
     }
 
     @Volatile private var foreground = false
     fun setForeground(resumed: Boolean) {
         foreground = resumed
-        if (!resumed) stopVoice("background")
+        if (!resumed) stopAllSound("background")
     }
 
     fun toggleVoice() {
         if (!voicePrefLoaded.isCompleted || !inVillage()) return
         val on = !_voiceOn.value
         _voiceOn.value = on
-        if (!on) stopVoice("muted")
+        if (!on) stopAllSound("muted")
         voicePrefs?.edit()?.putBoolean(VOICE_ON_KEY, on)?.apply()
     }
 
@@ -380,6 +402,7 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         voice.shutdown()
+        sfx.shutdown()
         signals.stop()
     }
 

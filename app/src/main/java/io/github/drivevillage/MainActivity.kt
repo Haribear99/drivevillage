@@ -10,9 +10,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -21,6 +23,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import io.github.drivevillage.core.gate.Screen
+import io.github.drivevillage.core.voice.Sfx
+import io.github.drivevillage.ui.LocalSfx
 import io.github.drivevillage.ui.VillageArt
 import io.github.drivevillage.ui.VillageScreen
 import io.github.drivevillage.ui.VillageViewModel
@@ -38,6 +42,7 @@ class MainActivity : ComponentActivity() {
             val screen by vm.screen.collectAsState()
             val loaded by vm.stateLoaded.collectAsState()
             val blocked by vm.writesBlocked.collectAsState()
+            val sfx = remember { { s: Sfx -> vm.playSfx(s) } }
             LaunchedEffect(screen) { if (screen == Screen.CLOSE) closeWithoutAnimation() }
             VillageTheme {
                 Box(Modifier.fillMaxSize().background(VillageTheme.background)) {
@@ -58,7 +63,7 @@ class MainActivity : ComponentActivity() {
                                 color = Color(0xFFE6E1D6), fontSize = 24.sp,
                                 modifier = Modifier.align(Alignment.Center).padding(24.dp),
                             )
-                            else -> VillageScreen(vm)
+                            else -> CompositionLocalProvider(LocalSfx provides sfx) { VillageScreen(vm) }
                         }
                     }
                     Flavor.SimulationOverlay(vm.signals)

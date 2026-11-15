@@ -2,9 +2,7 @@ package io.github.drivevillage.ui
 
 import android.content.Context
 import android.media.AudioAttributes
-import android.media.AudioFocusRequest
 import android.media.AudioFormat
-import android.media.AudioManager
 import android.media.AudioTrack
 import android.os.Handler
 import android.os.Looper
@@ -15,6 +13,7 @@ import io.github.drivevillage.core.voice.FocusPort
 import io.github.drivevillage.core.voice.PcmFormat
 import io.github.drivevillage.core.voice.PcmSink
 import io.github.drivevillage.core.voice.PlayOutcome
+import io.github.drivevillage.core.voice.SharedFocus
 import io.github.drivevillage.core.voice.VoicePlayback
 import io.github.drivevillage.core.voice.WavReader
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,30 +37,18 @@ import java.util.concurrent.Executors
  *   메인·차량 신호 스레드는 엔진 응답을 기다리지 않는다.
  * - **재생**: 앱이 연 AudioTrack에 작은 조각으로 쓴다. 매 조각 전에 발화 토큰과 허용 조건을 확인한다([VoicePlayback]).
  * - **중단**([stop]): 잠금 없이 세대를 올리고 재생 중인 트랙을 멈춘다. 안전 래치 콜백 스레드에서 바로 불린다.
- * - 포커스는 재생 스레드 하나에서 재생마다 요청·반납한다. 포커스를 잃으면(일시·duck 포함) 멈춘다.
+ * - 포커스는 앱 공용 포커스([AppAudioFocus], 효과음과 공유)를 재생 스레드에서 재생마다 임대·반납한다.
+ *   포커스를 잃으면(일시·duck 포함) 그 소유자(ViewModel)가 [stop]을 불러 멈춘다.
  * - 엔진이 없거나 한국어를 지원하지 않으면 조용히 비활성(화면 문장은 그대로 보인다).
  */
-class VillageVoice(context: Context, allowedNow: () -> Boolean) {
+class VillageVoice(context: Context, private val focus: SharedFocus, allowedNow: () -> Boolean) {
 
     enum class Status { INITIALIZING, READY, UNAVAILABLE }
 
     private val app = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
-    private val audio = app.getSystemService(AudioManager::class.java)
-    private val attrs = AudioAttributes.Builder()
-        .setUsage(AudioAttributes.USAGE_ASSISTANT)
-        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-        .build()
-    private val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-        .setAudioAttributes(attrs)
-        .setWillPauseWhenDucked(true)
-        .setOnAudioFocusChangeListener { change ->
-            if (change == AudioManager.AUDIOFOCUS_LOSS ||
-                change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT ||
-                change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK
-            ) stop("focus-lost-$change")
-        }
-        .build()
+    // ASSISTANT는 Pleos 표에서 음성 비서(Gleo)와 같은 VOICE_COMMAND 컨텍스트라 게임 앱 소리인 GAME(MUSIC 컨텍스트)으로 옮겼다(노트 05, AppAudioFocus 참조).
+    private val attrs = AppAudioFocus.attributes(AudioAttributes.CONTENT_TYPE_SPEECH)
 
     private val playback = VoicePlayback(allowedNow)
     private val synthThread: ExecutorService = Executors.newSingleThreadExecutor { r -> Thread(r, "voice-synth") }
@@ -280,9 +267,11 @@ class VillageVoice(context: Context, allowedNow: () -> Boolean) {
         }
     }
 
+    /** 재생 하나의 포커스 임대(앱 공용 포커스). 포커스를 잃었을 때의 중단은 [AppAudioFocus]의 소유자가 [stop]을 부른다. */
     private inner class Focus : FocusPort {
-        override fun request(): Boolean = audio.requestAudioFocus(focusRequest) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        override fun abandon() { audio.abandonAudioFocusRequest(focusRequest) }
+        private var lease: SharedFocus.Lease? = null
+        override fun request(): Boolean { lease = focus.acquire(); return lease != null }
+        override fun abandon() { lease?.let { focus.release(it) }; lease = null }
     }
 
     companion object {
