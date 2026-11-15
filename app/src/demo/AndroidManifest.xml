@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- demo 빌드 전용: 시연영상 녹화용 adb 제어(DemoControlReceiver). pleos 빌드에는 병합되지 않는다. -->
+    <application>
+        <receiver
+            android:name=".DemoControlReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="io.github.drivevillage.demo.CAPTURE" />
+                <action android:name="io.github.drivevillage.demo.SIM" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

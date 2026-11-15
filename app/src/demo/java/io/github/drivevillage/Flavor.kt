@@ -43,6 +43,9 @@ object Flavor {
     @Composable
     fun SimulationOverlay(signals: VehicleSignals) {
         val sim = signals as? SimulatedSignals ?: return
+        // 시연영상 녹화용 capture 모드: 오버레이를 숨긴다(adb로 켜고 끔, DemoControlReceiver).
+        val capture by sim.capture.collectAsState()
+        if (capture) return
         var expanded by remember { mutableStateOf(false) }
         val gear by sim.gear.collectAsState()
         val shift by sim.dayShift.collectAsState()
@@ -93,6 +96,8 @@ class SimulatedSignals private constructor(context: Context) : VehicleSignals {
     override val ux: StateFlow<UxState> = _ux
     private val _dayShift = MutableStateFlow(prefs.getLong("dayShift", 0L))
     override val dayShift: StateFlow<Long> = _dayShift
+    private val _capture = MutableStateFlow(prefs.getBoolean("capture", false))
+    val capture: StateFlow<Boolean> = _capture
 
     private var odoState by mutableStateOf(prefs.getFloat("odo", 12_000f).toDouble())
     var odometerKm: Double
@@ -118,6 +123,10 @@ class SimulatedSignals private constructor(context: Context) : VehicleSignals {
     fun shiftDays(days: Long) {
         _dayShift.value += days
         prefs.edit().putLong("dayShift", _dayShift.value).apply()
+    }
+    fun setCapture(on: Boolean) {
+        _capture.value = on
+        prefs.edit().putBoolean("capture", on).apply()
     }
 
     override suspend fun readOdometer(): OdometerReading { delay(150); return OdometerReading.Km(odometerKm) }
