@@ -10,7 +10,7 @@ Pleos Connect(Android Automotive OS)용 **정차 중 전용** 앱이다. 주행 
 | flavor | 용도 |
 |---|---|
 | `pleos` | 실제 차량 신호(AAOS `GEAR_SELECTION`·CarUxRestrictions + Pleos Vehicle SDK 2.3.2 Odometer). **제출·시연용.** 시험 입력·배속·더미 데이터 없음 |
-| `demo` | 차량 없이 화면을 보기 위한 빌드. 화면 왼쪽 아래에 늘 **「시뮬레이션」** 패널(기어 P/D, 주행거리 +1/+10km, 날짜 +30일)이 보인다. 가짜 신호 코드는 `app/src/demo`에만 있다 |
+| `demo` | 차량 없이 화면을 보기 위한 빌드. 화면 왼쪽 아래에 **「시뮬레이션」** 패널(기어 P/D, 주행거리 +1/+10km, 날짜 +30일)이 보인다. 시연영상 녹화용 capture 모드(adb 브로드캐스트로 켬)에서는 패널을 숨긴다. 가짜 신호 코드는 `app/src/demo`에만 있다 |
 
 ```bash
 ./gradlew assemblePleosRelease      # 제출 APK
