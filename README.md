@@ -39,7 +39,8 @@ Pleos Connect(Android Automotive OS)용 **정차 중 전용** 앱이다. 주행 
 
 ## APK 위치
 
-- 제출 APK(최신): 프로젝트 상위 폴더 `docs/deliverables/drivevillage-0.1.2-pleos-release.apk`(release, 서명됨). 이전 0.1.0·0.1.1 APK는 그대로 둔다. 빌드 산출물 원본은 `app/build/outputs/apk/pleos/release/app-pleos-release.apk`.
+- 제출 APK: 이 저장소의 `apk/DRIVEVILLAGE_DRIVEVILLAGE_release.apk`(0.1.2, pleos flavor release, 서명됨, 시험 입력·더미 데이터 없음, SHA-256 앞 8자리 `56F17C85`).
+- 빌드 산출물 원본은 `app/build/outputs/apk/pleos/release/app-pleos-release.apk`.
 
 ## MVP 범위
 
