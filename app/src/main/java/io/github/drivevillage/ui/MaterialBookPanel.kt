@@ -115,12 +115,15 @@ internal fun DecoratePanel(vm: VillageViewModel, state: AppState, open: OpenResu
             e.unplaced.isEmpty() -> {
                 CardTitle(e.kind.label)
                 CardBody("모두 마을에 놓였어요. 마을에서 누르면 그날의 기억이 보여요.", VillageTheme.inkSub)
+                // 예전 기념품은 가진 종류만 보이므로 얻는 법 대신 여기서 알린다.
+                MaterialBook.retiredNote(e.kind)?.let { CardBody(it, VillageTheme.inkSub) }
             }
             else -> {
                 val chosen = e.unplaced.firstOrNull { it.id == selected }
                 val m = chosen ?: e.unplaced[pick % e.unplaced.size]
                 CardTitle(e.kind.label)
                 CardBody(m.tag, VillageTheme.inkSub)
+                MaterialBook.retiredNote(e.kind)?.let { CardBody(it, VillageTheme.inkSub) }
                 when {
                     // 고른 상태는 색이 아니라 문구로도 알린다.
                     chosen != null -> {

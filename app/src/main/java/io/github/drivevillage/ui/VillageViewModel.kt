@@ -107,6 +107,8 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
     val voiceHold: StateFlow<Bubble?> = _voiceHold
     private val _wake = MutableStateFlow<FacilityWake?>(null)
     val wake: StateFlow<FacilityWake?> = _wake
+    /** 점등 인사 예약(마지막 점등의 인사만, 연출이 끝난 뒤). */
+    private val wakeGreeting = WakeGreeting(viewModelScope, WAKE_GREETING_DELAY_MS)
     private val _notice = MutableStateFlow<String?>(null)
     val notice: StateFlow<String?> = _notice
     /** 화면이 쓰는 '지금'(demo의 날짜 이동 반영). */
@@ -320,15 +322,13 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
                     Settings.Global.getFloat(getApplication<Application>().contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
                 }.getOrDefault(false)
                 val greet = Bubble(lit.greeter, lit.wakeLine)
-                _wake.value = FacilityWake(lit, SystemClock.uptimeMillis())
+                val wakeEvent = FacilityWake(lit, SystemClock.uptimeMillis())
+                _wake.value = wakeEvent
                 playSfx(Sfx.LIGHT)
-                if (reduce) _bubble.value = greet
-                else {
-                    _bubble.value = null
-                    delay(WAKE_GREETING_DELAY_MS)
-                    // 그 사이 다른 말풍선이 떴거나 화면이 닫혔으면 덮어쓰지 않는다.
-                    if (_bubble.value == null && inVillage()) _bubble.value = greet
-                }
+                if (!reduce) _bubble.value = null
+                // 연출 중 다른 시설이 또 켜지면 앞 인사는 버리고 마지막 점등의 인사만 그 연출 뒤에 띄운다.
+                // 그 사이 다른 말풍선이 떴거나 화면이 닫혔으면 덮어쓰지 않는다.
+                wakeGreeting.lit(wakeEvent, reduce, canShow = { _bubble.value == null && inVillage() }) { _bubble.value = greet }
             } else {
                 _bubble.value = Bubble(Resident.CRAFTSMAN, lines.line(Resident.CRAFTSMAN, LineContext.WORKSHOP, summary(null, 0), state.value.maintenance.workshopLevel + chatSeed++))
             }
@@ -430,7 +430,10 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
         /** 점등 연출(VillageCanvas, 약 1.3초)이 끝난 뒤 인사를 띄운다. */
         private const val WAKE_GREETING_DELAY_MS = 1_300L
         private const val VOICE_INIT_WAIT_MS = 4_000L
-        /** 말풍선 숨김을 음성 때문에 미루는 최대 시간(합성 만료 10초 + 재생 여유). */
+        /**
+         * 말풍선 숨김을 음성 때문에 미루는 최대 시간: 준비 대기 제외 20초(합성 만료 10초 + 재생 여유).
+         * 설정 읽기와 엔진 준비 대기([VOICE_INIT_WAIT_MS], 최대 4초)는 이 20초에 들어가지 않고 그 앞에 따로 붙는다.
+         */
         private const val VOICE_HOLD_MAX_MS = 20_000L
         private const val VOICE_POLL_MS = 100L
         private const val VOICE_PREFS = "village_voice"

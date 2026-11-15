@@ -590,6 +590,28 @@ class VillageCoreTest {
         }
     }
 
+    /**
+     * 시계가 이틀 이상 뒤로 가면 기준일이 미래가 되어 부탁이 다시 열리고 한 번 더 답할 수 있다.
+     * 그래도 재료는 없고, 증축은 마지막 증축일이 오늘보다 미래인 동안 날짜로는 늘지 않는다(README '남은 위험' 근거).
+     */
+    @Test fun quest_clockBack_reopensButNoExtraGrowthOrMaterials() {
+        val d = day0.toEpochDay()
+        val s = withSetup(10_000.0, d - 10, oilKm = 5_000, months = 12, today = d)
+        val (a, g1) = Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, 16_000.0, d, 15_900.0)!!
+        assertTrue(g1); assertEquals(1, a.maintenance.workshopLevel)
+        assertFalse(Maintenance.status(QuestDef.ENGINE_OIL, a, 16_000.0, d)!!.open)
+        val back = d - 3
+        assertTrue(Maintenance.status(QuestDef.ENGINE_OIL, a, 16_000.0, back)!!.open) // 다시 열린다
+        val (b, g2) = Maintenance.respond(a, QuestDef.ENGINE_OIL, QuestResponse.DONE, 16_000.0, back, 15_950.0, back - 1)!!
+        assertFalse(g2)
+        assertEquals(1, b.maintenance.workshopLevel)
+        assertTrue(b.materials.isEmpty())
+        // 시계가 돌아와도 마지막 증축(16,000km·d)에서 한 주기가 지나기 전에는 증축할 수 없다
+        assertFalse(Maintenance.status(QuestDef.ENGINE_OIL, b, 16_000.0, d + 1)!!.growthAvailable)
+        assertTrue(Maintenance.status(QuestDef.ENGINE_OIL, b, 21_000.0, d + 1)!!.growthAvailable)
+        assertTrue(StateValidator.isValid(b))
+    }
+
     /** 증축 중복 방지 회귀: 다음에 → 과거 값으로 했어요 → 곧바로 재도래 → 다음에 … 를 반복해도 증축은 한 번. */
     @Test fun quest_rewardDedup_survivesHistoryRewrites() {
         val d = day0.toEpochDay()
@@ -690,7 +712,10 @@ class VillageCoreTest {
         assertTrue("이모지: $note", note.codePoints().noneMatch { it >= 0x1F000 })
         assertTrue("숫자: $note", numbersFree(note))
         assertFalse(note.contains("했어요를 누르면"))
-        assertTrue(note.contains("모두 답하면 다시 켜져요"))
+        // 오래전 정비 거리를 넣어 곧바로 다시 열리는 경우가 있어 '모두 답하면 (반드시) 다시 켜진다'고 단정하지 않는다.
+        assertFalse(note.contains("모두 답하면 다시 켜져요"))
+        assertTrue(note.contains("모두 답하면 보통은 다시 켜져요"))
+        assertTrue(note.contains("정비 때가 다시 오면 또 쉬어요"))
     }
 
     private fun numbersFree(t: String) = io.github.drivevillage.core.village.DialogueValidator.numbersIn(t).isEmpty()

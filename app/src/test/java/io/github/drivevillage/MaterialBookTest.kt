@@ -131,6 +131,39 @@ class MaterialBookTest {
         assertEquals(6, MaterialBook.columns(680f, 24f, 64f, count = 11))
     }
 
+    @Test fun columns_eleven_neverLeavesSingleCellLastRow() {
+        // 5열까지만 들어가는 폭(416~503dp)에서 5열이면 5·5·1. 마지막 줄이 절반 이상 차는 4열(4·4·3)을 쓴다.
+        assertEquals(4, MaterialBook.columns(455f, 24f, 64f, count = 11))
+        assertEquals(4, MaterialBook.columns(416f, 24f, 64f, count = 11))
+        assertEquals(6, MaterialBook.columns(504f, 24f, 64f, count = 11)) // 6·5
+        // 3열까지만 들어가면 3·3·3·2(마지막 줄 2/3)
+        assertEquals(3, MaterialBook.columns(300f, 24f, 64f, count = 11))
+        for (w in 240..900 step 7) {
+            val c = MaterialBook.columns(w.toFloat(), 24f, 64f, count = 11)
+            assertTrue("w=$w c=$c", (w - 24f * (c - 1)) / c >= 64f)
+            assertTrue("w=$w c=$c 마지막 줄 ${11 % c}", 11 % c * 2 >= c)
+        }
+        // 10·12칸 결과는 바뀌지 않는다(약수가 먼저)
+        assertEquals(5, MaterialBook.columns(455f, 24f, 64f, count = 10))
+        assertEquals(4, MaterialBook.columns(455f, 24f, 64f, count = 12))
+    }
+
+    @Test fun retiredNote_onlyForRetiredKinds_copyRules() {
+        // 가진 예전 기념품의 상세 카드에만 붙는다(얻는 법 문구는 못 만난 칸에만 쓰여 예전 기념품에는 나오지 않음).
+        MaterialKind.entries.forEach { k ->
+            val n = MaterialBook.retiredNote(k)
+            if (k == MaterialKind.GEAR || k == MaterialKind.MEMORIAL) {
+                assertEquals("예전 버전의 기념품이에요.\n지금은 새로 생기지 않아요", n)
+            } else assertNull("$k", n)
+        }
+        val n = MaterialBook.retiredNote(MaterialKind.GEAR)!!
+        assertFalse(n.contains("정비"))
+        listOf("밀렸어요", "남았어요", "놓치지", "연속", "스트릭", "—").forEach { bad -> assertFalse(n.contains(bad)) }
+        assertTrue(n.codePoints().noneMatch { it >= 0x1F000 })
+        // 가로 패널 한 줄 약 15자: 줄마다 15자 이하
+        n.lines().forEach { assertTrue(it, it.length <= 15) }
+    }
+
     @Test fun defaultFocus_selectedThenNewThenFirstPlaceable() {
         val wood = mat("w", MaterialKind.WOOD, slot = 1)
         val stone = mat("s", MaterialKind.STONE)

@@ -52,6 +52,13 @@ object MaterialBook {
         ItemSource.MAINTENANCE, ItemSource.MEMORIAL -> "예전 버전의 기념품이라\n지금은 새로 생기지 않아요"
     }
 
+    /**
+     * 가진 칸의 상세 카드에 덧붙이는 한 줄. 예전 기념품은 가진 종류만 도감에 보이므로 [hint]의 예전 기념품 문구는 화면에 나오지 않는다.
+     * 그래서 가진 예전 기념품 카드에 이 줄로 알린다. 현역 종류는 null.
+     */
+    fun retiredNote(kind: MaterialKind): String? =
+        if (retired(kind)) "예전 버전의 기념품이에요.\n지금은 새로 생기지 않아요" else null
+
     private fun seasonWord(kind: MaterialKind): String = when (kind) {
         MaterialKind.SPRING_GARLAND -> "봄"
         MaterialKind.SUMMER_LANTERN -> "여름"
@@ -71,13 +78,18 @@ object MaterialBook {
 
     /**
      * 격자 열 수: 칸 수 [count]의 약수(6·5·4·3) 중 칸이 [minCellDp] 이상인 가장 많은 열(마지막 줄이 비지 않게).
-     * 약수가 하나도 안 들어가면 들어가는 가장 많은 열(마지막 줄이 덜 찬다), 그것도 안 되면 2열.
+     * 약수가 하나도 안 들어가면 마지막 줄이 절반 이상 차는 열 중 가장 많은 열, 그것도 없으면 들어가는 가장 많은 열,
+     * 그것도 안 되면 2열.
      * 12칸이면 예전과 같다(6·4·3). 10칸이면 세로 패널 5열, 가로 패널 4열(4·4·2).
+     * 11칸(예전 기념품 한 종류만 가짐)은 약수가 없다. 세로 패널(약 680dp) 6열(6·5), 가로 패널(약 367dp) 4열(4·4·3).
+     * 5열까지만 들어가는 폭(약 416~503dp)에서는 5열이면 5·5·1로 마지막 줄에 1칸만 남아 4열(4·4·3)을 쓴다.
      */
     fun columns(widthDp: Float, gapDp: Float, minCellDp: Float, count: Int = ORDER.size): Int {
         fun fits(c: Int) = (widthDp - gapDp * (c - 1)) / c >= minCellDp
         val candidates = 6 downTo 3
-        return candidates.firstOrNull { count % it == 0 && fits(it) } ?: candidates.firstOrNull { fits(it) } ?: 2
+        return candidates.firstOrNull { count % it == 0 && fits(it) }
+            ?: candidates.firstOrNull { fits(it) && (count % it) * 2 >= it }
+            ?: candidates.firstOrNull { fits(it) } ?: 2
     }
 
     /**
