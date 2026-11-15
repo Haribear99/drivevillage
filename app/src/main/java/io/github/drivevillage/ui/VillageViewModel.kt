@@ -3,6 +3,8 @@ package io.github.drivevillage.ui
 import android.app.Application
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.SystemClock
+import android.provider.Settings
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -12,6 +14,8 @@ import io.github.drivevillage.core.gate.Screen
 import io.github.drivevillage.core.village.AppState
 import io.github.drivevillage.core.village.CarPreset
 import io.github.drivevillage.core.village.Decoration
+import io.github.drivevillage.core.village.Facilities
+import io.github.drivevillage.core.village.Facility
 import io.github.drivevillage.core.village.LineContext
 import io.github.drivevillage.core.village.LineGenerator
 import io.github.drivevillage.core.village.Maintenance
@@ -63,6 +67,9 @@ sealed interface OpenResult {
 /** 주민 말풍선 한 줄. */
 data class Bubble(val resident: Resident, val text: String)
 
+/** '했어요'로 쉬던 시설이 다시 켜진 순간(점등 연출 1회). [atMs]는 SystemClock.uptimeMillis 기준. */
+data class FacilityWake(val facility: Facility, val atMs: Long)
+
 class VillageViewModel(app: Application) : AndroidViewModel(app) {
 
     val signals = Flavor.createSignals(app)
@@ -89,6 +96,8 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
     val odoKm: StateFlow<Double?> = _odoKm
     private val _bubble = MutableStateFlow<Bubble?>(null)
     val bubble: StateFlow<Bubble?> = _bubble
+    private val _wake = MutableStateFlow<FacilityWake?>(null)
+    val wake: StateFlow<FacilityWake?> = _wake
     private val _notice = MutableStateFlow<String?>(null)
     val notice: StateFlow<String?> = _notice
     /** 화면이 쓰는 '지금'(demo의 날짜 이동 반영). */
@@ -256,31 +265,51 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * 정비 퀘스트 응답: 했어요 / 예약했어요 / 다음에. 무엇이든 같은 작은 보상(주기마다 1회).
-     * [serviceKm]은 '했어요'에서 정비 당시 주행거리를 직접 넣었을 때만(기념 장식 +1).
+     * 정비 퀘스트 응답: 했어요 / 예약했어요 / 다음에. 응답은 재료를 주지 않는다.
+     * '했어요'로 쉬던 시설이 평상으로 돌아오면 점등 연출([wake])과 그 시설 주민의 한 줄 인사를 띄운다.
+     * [serviceKm]·[serviceDay]는 '했어요'에서 정비 당시 값을 직접 넣었을 때만(조건을 만족하면 공방 증축).
      */
     fun respondQuest(def: QuestDef, response: QuestResponse, serviceKm: Double? = null, serviceDay: Long? = null) {
         if (!inVillage()) return
         val today = today()
         val odo = currentOdo()
+        // 시설 쉬는 표시는 화면이 이번에 읽은 주행거리로 그린다(VillageScreen). 점등 판정도 같은 값으로 해야 그림과 맞는다.
+        val drawnOdo = _odoKm.value
         viewModelScope.launch {
             val r = repo.mutate { cur ->
                 val out = Maintenance.respond(cur, def, response, odo, today, serviceKm, serviceDay)
-                (out?.first ?: cur) to out?.second
+                if (out == null) cur to null else out.first to (out.second to Facilities.woke(cur, out.first, drawnOdo, today))
             }
-            val rewards = r.value
-            if (!r.saved || rewards == null) {
+            val res = r.value
+            if (!r.saved || res == null) {
                 _notice.value = if (!r.saved) SAVE_FAIL else "기록하지 못했어요. 정비 시점은 현재 주행거리 이하·직전 기준 이후, 날짜는 오늘 이전이어야 해요."
                 return@launch
             }
-            val what = when (response) {
-                QuestResponse.DONE -> "「${def.title}」 했어요로 기록했어요." + if (rewards.isNotEmpty()) " 공방이 한 칸 늘었어요." else ""
+            val (grew, woke) = res
+            _notice.value = when (response) {
+                QuestResponse.DONE -> "「${def.title}」 했어요로 기록했어요." + if (grew) " 공방이 한 칸 커졌어요." else ""
                 QuestResponse.RESERVED -> "「${def.title}」 예약했어요로 기록했어요. ${Maintenance.RESERVE_RECHECK_DAYS}일 뒤에 다시 여쭐게요."
                 QuestResponse.LATER -> "「${def.title}」 다음에로 기록했어요. ${Maintenance.LATER_KM.toInt()}km 또는 ${Maintenance.LATER_DAYS}일 중 먼저 오는 때에 다시 알려 드려요."
             }
-            val got = if (rewards.isEmpty()) " 응답 보상은 지난 보상 뒤 한 주기가 지나면 다시 드려요." else " 받은 것: " + rewards.joinToString(", ") { it.kind.label }
-            _notice.value = what + got
-            _bubble.value = Bubble(Resident.CRAFTSMAN, lines.line(Resident.CRAFTSMAN, LineContext.WORKSHOP, summary(null, 0), state.value.maintenance.workshopLevel + rewards.size))
+            // 점등 연출과 인사는 '했어요'에만. 예약했어요·다음에로 미뤄도 시설은 쉬는 표시를 거두지만 조용히 바뀐다.
+            val lit = if (response == QuestResponse.DONE) woke.firstOrNull() else null
+            if (lit != null) {
+                // 말풍선이 시설(특히 위쪽의 풍차·물레방아)을 가리지 않게, 연출 동안 비워 두었다가 끝나면 인사를 띄운다.
+                val reduce = runCatching {
+                    Settings.Global.getFloat(getApplication<Application>().contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+                }.getOrDefault(false)
+                val greet = Bubble(lit.greeter, lit.wakeLine)
+                _wake.value = FacilityWake(lit, SystemClock.uptimeMillis())
+                if (reduce) _bubble.value = greet
+                else {
+                    _bubble.value = null
+                    delay(WAKE_GREETING_DELAY_MS)
+                    // 그 사이 다른 말풍선이 떴거나 화면이 닫혔으면 덮어쓰지 않는다.
+                    if (_bubble.value == null && inVillage()) _bubble.value = greet
+                }
+            } else {
+                _bubble.value = Bubble(Resident.CRAFTSMAN, lines.line(Resident.CRAFTSMAN, LineContext.WORKSHOP, summary(null, 0), state.value.maintenance.workshopLevel + chatSeed++))
+            }
         }
     }
 
@@ -292,7 +321,7 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
 
     fun showMaterialMemory(m: Material) {
         if (!inVillage()) return
-        _notice.value = "${m.kind.label} — ${m.tag}"
+        _notice.value = "${m.kind.label}: ${m.tag}"
     }
 
     fun dismissNotice() { _notice.value = null }
@@ -343,6 +372,8 @@ class VillageViewModel(app: Application) : AndroidViewModel(app) {
     companion object {
         private const val TAG = "DriveVillage"
         const val PENDING_TIMEOUT_MS = 3_000L
+        /** 점등 연출(VillageCanvas, 약 1.3초)이 끝난 뒤 인사를 띄운다. */
+        private const val WAKE_GREETING_DELAY_MS = 1_300L
         private const val VOICE_INIT_WAIT_MS = 4_000L
         private const val VOICE_PREFS = "village_voice"
         private const val VOICE_ON_KEY = "voice_on"

@@ -68,7 +68,7 @@ enum class MaterialKind(val label: String, val source: ItemSource) {
     // 새 계절 첫 정산
     SPRING_GARLAND("봄 꽃줄", ItemSource.SEASON), SUMMER_LANTERN("여름 등불", ItemSource.SEASON),
     AUTUMN_WREATH("가을 잎 화환", ItemSource.SEASON), WINTER_STAR("겨울 별 장식", ItemSource.SEASON),
-    // 정비 응답(작은 보상)과 '했어요' + 주행거리 입력(기념 장식)
+    // 0.1.3까지의 정비 응답 보상. 0.1.4부터 새로 주지 않지만 이미 저장된 아이템을 읽기 위해 남긴다.
     GEAR("공방 톱니", ItemSource.MAINTENANCE), MEMORIAL("정비 기념패", ItemSource.MEMORIAL),
 }
 
@@ -116,7 +116,7 @@ data class QuestRecord(
     val completions: Int,
     /** 퀘스트 주기 번호. '했어요'마다 1 증가. 응답 보상은 주기마다 1회. */
     val cycle: Int = 0,
-    /** 응답 보상을 준 마지막 주기. */
+    /** 응답 보상(톱니)을 준 마지막 주기. 0.1.3까지의 기록, 0.1.4부터 쓰지 않음(저장 호환용). */
     val rewardedCycle: Int? = null,
     /** '예약했어요'·'다음에'로 미룬 동안 숨김. 이 날짜(포함)부터 다시 보인다. */
     val snoozeUntilDay: Long? = null,
@@ -124,10 +124,10 @@ data class QuestRecord(
     val snoozeUntilKm: Double? = null,
     /** '예약했어요'로 미룬 경우 재확인 문구를 보인다. */
     val reservedRecheck: Boolean = false,
-    /** 마지막으로 응답 보상을 준 때의 주행거리·날짜(보상 중복 방지 기준, 정비 이력과 별개). */
+    /** 마지막으로 응답 보상(톱니)을 준 때의 주행거리·날짜. 0.1.3까지의 기록, 0.1.4부터 쓰지 않음(저장 호환용). */
     val rewardAnchorKm: Double? = null,
     val rewardAnchorDay: Long? = null,
-    /** 마지막으로 정비 기념패(증빙 보상)를 준 때의 주행거리·날짜. 톱니 보상과 독립. */
+    /** 마지막 공방 증축(증빙 '했어요') 때의 주행거리·날짜. 0.1.3까지는 기념패와 함께 기록했다(필드명 유지). */
     val memorialAnchorKm: Double? = null,
     val memorialAnchorDay: Long? = null,
 )

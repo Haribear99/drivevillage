@@ -82,8 +82,8 @@ data class QuestStatus(
     val reservedRecheck: Boolean = false,
     val snoozeDaysLeft: Long? = null,
     val snoozeKmLeft: Double? = null,
-    /** 지금 응답하면 보상을 받는지(주기당 1회 + 마지막 보상 뒤 한 주기 경과). */
-    val rewardAvailable: Boolean = true,
+    /** 지금 증빙 '했어요'로 공방이 커질 수 있는지(마지막 증축 뒤 한 주기 경과). 정비 응답은 재료를 주지 않는다. */
+    val growthAvailable: Boolean = true,
     /** 마지막 정비 시점을 모르는 상태(온보딩 '모름'). */
     val baseUnconfirmed: Boolean = false,
 )
@@ -126,16 +126,9 @@ object Maintenance {
     }
 
     /**
-     * 응답 보상 가능 여부(정비 이력과 분리). 같은 퀘스트 주기 안 1회 + 마지막 보상 시점(신고 당시 주행거리·날짜)부터
-     * 한 주기가 지나야 다음 보상. 이력에 과거 값을 넣어 곧바로 다시 도래시켜도 보상은 반복되지 않는다.
+     * 공방 증축 가능 여부(정비 이력과 분리). 마지막 증축 시점(신고 당시 주행거리·날짜, 저장 필드명은 이전의 memorialAnchor)에서
+     * 한 주기가 지나야 다시. 이력에 과거 값을 넣어 곧바로 다시 도래시켜도 증축은 반복되지 않는다.
      */
-    private fun rewardOk(def: QuestDef, rec: QuestRecord?, setup: MaintenanceSetup, odoKm: Double?, today: Long): Boolean {
-        if (rec == null) return true
-        if (rec.rewardedCycle == rec.cycle) return false
-        return anchorPassed(def, setup, rec.rewardAnchorKm, rec.rewardAnchorDay, odoKm, today)
-    }
-
-    /** 증빙 보상(기념패·공방 증축) 가능 여부: 톱니와 독립. 마지막 기념패 시점에서 한 주기가 지나야 다시. */
     private fun memorialOk(def: QuestDef, rec: QuestRecord?, setup: MaintenanceSetup, odoKm: Double?, today: Long): Boolean =
         rec == null || anchorPassed(def, setup, rec.memorialAnchorKm, rec.memorialAnchorDay, odoKm, today)
 
@@ -186,7 +179,7 @@ object Maintenance {
             def = def, open = due && !snoozed, dueBy = dueBy, kmLeft = kmLeft, daysLeft = daysLeft, baseKm = b?.km, baseEpochDay = b?.day,
             due = due, snoozed = due && snoozed, reservedRecheck = due && (rec?.reservedRecheck == true),
             snoozeDaysLeft = snoozeDay?.let { it - today }, snoozeKmLeft = if (snoozeKm != null && odoKm != null) snoozeKm - odoKm else null,
-            rewardAvailable = rewardOk(def, rec, setup, odoKm, today), baseUnconfirmed = unconfirmed,
+            growthAvailable = memorialOk(def, rec, setup, odoKm, today), baseUnconfirmed = unconfirmed,
         )
     }
 
@@ -198,20 +191,21 @@ object Maintenance {
     /**
      * 정비 퀘스트 응답(자기 신고). 열린 퀘스트만 받는다. 앱은 정비 여부를 알 수 없다. 기록은 사용자의 응답일 뿐이다.
      *
-     * 정비 이력(다음 주기 계산)과 보상 중복 방지를 분리한다.
-     * - 보상: 세 응답 모두 같은 작은 보상(공방 톱니 1개). 같은 퀘스트 주기 안 1회, 그리고 마지막 보상 시점
-     *   (신고 당시 주행거리·날짜)부터 한 주기가 지나야 다음 보상.
-     * - 선택 증빙: '했어요'에서 정비 당시 날짜·주행거리를 넣으면 기념패 1개와 공방 증축(같은 보상 조건).
+     * 정비 응답은 **재료를 주지 않는다**(0.1.4 P2). 반응은 시설이 다시 켜지는 연출과 주민의 한 줄 인사뿐이다(화면 쪽).
+     * 이전 저장 데이터의 공방 톱니·정비 기념패는 그대로 둔다.
+     * - 선택 증빙: '했어요'에서 정비 당시 날짜·주행거리를 넣으면 공방 증축 1단계. 마지막 증축 시점
+     *   (신고 당시 주행거리·날짜)부터 한 주기가 지나야 다음 증축(과거 값으로 재도래시켜 반복해도 늘지 않음).
      * - [QuestResponse.DONE]: 다음 주기 기준을 [serviceKm]·[serviceDay](정비 당시, 선택)로 잡는다. 입력이 없으면 지금 값.
      *   입력은 현재 주행거리 이하·직전 기준 이상, 날짜는 미래가 아니고 직전 기준일 이상이어야 한다(아니면 거절).
-     *   입력이 있으면 기념패 1개를 더 준다(보상 조건 충족 시).
      * - [QuestResponse.RESERVED]: [RESERVE_RECHECK_DAYS]일 뒤 재확인으로 다시 연다.
      * - [QuestResponse.LATER]: [LATER_KM]km 또는 [LATER_DAYS]일 중 먼저 오는 쪽(기준 미확인이면 날짜만).
+     *
+     * @return (새 상태, 공방이 커졌는지). 받을 수 없는 응답이면 null.
      */
     fun respond(
         state: AppState, def: QuestDef, response: QuestResponse, odoKm: Double?, today: Long,
         serviceKm: Double? = null, serviceDay: Long? = null,
-    ): Pair<AppState, List<Material>>? {
+    ): Pair<AppState, Boolean>? {
         val st = status(def, state, odoKm, today) ?: return null
         if (!st.open) return null
         val setup = state.maintenance.setup ?: return null
@@ -230,27 +224,10 @@ object Maintenance {
             if (prev != null && serviceDay < prev.day && prev.day <= today + 1) return null
         }
         val rec0 = rec ?: QuestRecord(prev?.km, prev?.day ?: today, 0)
-        val ok = rewardOk(def, rec, setup, odoKm, today)
-        val existing = state.materials.mapTo(HashSet()) { it.id }
-        val eventId = "quest-${def.id}-${rec0.cycle}"
-        val rewards = mutableListOf<Material>()
-        if (ok) {
-            val id = "gear-${def.id}-${rec0.cycle}"
-            if (id !in existing) rewards += Material(id, MaterialKind.GEAR, today, eventId, "${SceneLedger.dateLabel(today)} · ${def.title} 응답")
-        }
-        // 증빙 보상(기념패 + 공방 증축)은 톱니와 독립: 예약했어요·다음에 뒤의 증빙 '했어요'도 받는다.
-        var memo = false
-        if (response == QuestResponse.DONE && (serviceKm != null || serviceDay != null) && memorialOk(def, rec, setup, odoKm, today)) {
-            val mid = "memo-${def.id}-${rec0.cycle}"
-            val what = listOfNotNull(serviceDay?.let { SceneLedger.dateLabel(it) }, serviceKm?.let { "${Math.round(it)}km" }).joinToString(" ")
-            if (mid !in existing) {
-                rewards += Material(mid, MaterialKind.MEMORIAL, today, eventId, "${SceneLedger.dateLabel(today)} · ${def.title} $what 기록")
-                memo = true
-            }
-        }
-        // 보상을 준 응답이면 해당 보상 기준점을 지금(신고 당시)으로 옮긴다. 정비 이력과는 별개다.
-        val gearAnchored = if (ok) rec0.copy(rewardedCycle = rec0.cycle, rewardAnchorKm = odoKm, rewardAnchorDay = today) else rec0
-        val anchored = if (memo) gearAnchored.copy(memorialAnchorKm = odoKm, memorialAnchorDay = today) else gearAnchored
+        // 공방 증축: 증빙이 있는 '했어요'에서만(예약했어요·다음에 뒤의 증빙 '했어요'도 포함). 재료는 주지 않는다.
+        val grow = response == QuestResponse.DONE && (serviceKm != null || serviceDay != null) && memorialOk(def, rec, setup, odoKm, today)
+        // 증축한 응답이면 증축 기준점을 지금(신고 당시)으로 옮긴다. 정비 이력과는 별개다.
+        val anchored = if (grow) rec0.copy(memorialAnchorKm = odoKm, memorialAnchorDay = today) else rec0
         val newRec = when (response) {
             QuestResponse.DONE -> anchored.copy(
                 baseKm = serviceKm ?: odoKm, baseEpochDay = serviceDay ?: today, completions = rec0.completions + 1,
@@ -266,12 +243,11 @@ object Maintenance {
         val next = state.copy(
             maintenance = state.maintenance.copy(
                 records = state.maintenance.records + (def.id to newRec),
-                // 공방 증축은 증빙(정비 당시 날짜·주행거리 입력)이 있는 '했어요'에서 기념패를 받을 때만.
-                workshopLevel = state.maintenance.workshopLevel + if (rewards.any { it.kind == MaterialKind.MEMORIAL }) 1 else 0,
+                // 공방 증축은 증빙(정비 당시 날짜·주행거리 입력)이 있는 '했어요'에서, 증축 조건을 만족할 때만.
+                workshopLevel = state.maintenance.workshopLevel + if (grow) 1 else 0,
             ),
-            materials = state.materials + rewards,
         )
-        return next to rewards
+        return next to grow
     }
 
     /** '예약했어요' 뒤 재확인까지의 일수(팀 가정값). */

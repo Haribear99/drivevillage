@@ -390,35 +390,39 @@ class VillageCoreTest {
         val d = day0.toEpochDay()
         val s = withSetup(10_000.0, d)
         assertNull(Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, 15_000.0, d + 1)) // 아직 안 열림
-        val (done, rw) = Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, 20_100.0, d + 40)!!
-        assertEquals(listOf(MaterialKind.GEAR), rw.map { it.kind })
-        assertEquals(0, done.maintenance.workshopLevel) // 증빙 없는 '했어요'는 톱니만, 증축 없음
+        val (done, grew) = Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, 20_100.0, d + 40)!!
+        assertFalse(grew)
+        assertEquals(0, done.maintenance.workshopLevel) // 증빙 없는 '했어요'는 증축 없음
+        assertTrue(done.materials.isEmpty()) // 정비 응답은 재료를 주지 않는다(0.1.4 P2)
         assertNull(Maintenance.respond(done, QuestDef.ENGINE_OIL, QuestResponse.DONE, 20_100.0, d + 40)) // 닫힘
         val st = Maintenance.status(QuestDef.ENGINE_OIL, done, 20_200.0, d + 41)!!
         assertFalse(st.open); assertEquals(9_900.0, st.kmLeft!!, 1e-9)
-        assertFalse(st.rewardAvailable) // 마지막 보상(20,100km)에서 한 주기가 지나야 다음 보상
-        // 다음 주기 도래 → 응답 보상 1개 더
-        val (next, rw2) = Maintenance.respond(done, QuestDef.ENGINE_OIL, QuestResponse.LATER, 30_100.0, d + 60)!!
-        assertEquals(1, rw2.size)
-        assertEquals(2, gears(next))
+        assertTrue(st.growthAvailable) // 증빙 없는 '했어요'는 증축 기준점을 옮기지 않는다
+        // 다음 주기가 도래해 응답해도 재료는 없다
+        val (next, grew2) = Maintenance.respond(done, QuestDef.ENGINE_OIL, QuestResponse.LATER, 30_100.0, d + 60)!!
+        assertFalse(grew2)
+        assertEquals(0, gears(next))
+        assertTrue(next.materials.isEmpty())
         assertTrue(StateValidator.isValid(next))
     }
 
-    /** 세 응답 모두 같은 작은 보상, 같은 주기 안에서는 1회만. */
-    @Test fun quest_anyResponse_sameSmallReward_oncePerCycle() {
+    /** 세 응답 모두 재료 없음. 미룸이 끝나 다시 열려 응답해도 마찬가지(기록·주기는 그대로 진행). */
+    @Test fun quest_anyResponse_noMaterials_acrossSnoozes() {
         val d = day0.toEpochDay()
         for (first in QuestResponse.entries) {
             val s = withSetup(10_000.0, d)
-            val (a, r1) = Maintenance.respond(s, QuestDef.ENGINE_OIL, first, 20_000.0, d + 1)!!
-            assertEquals(first.name, listOf(MaterialKind.GEAR), r1.map { it.kind })
+            val (a, g1) = Maintenance.respond(s, QuestDef.ENGINE_OIL, first, 20_000.0, d + 1)!!
+            assertFalse(first.name, g1)
+            assertTrue(first.name, a.materials.isEmpty())
             if (first == QuestResponse.DONE) continue
-            // 미룸이 끝나 다시 열려도 같은 주기 → 보상 없음
             val later = d + 1 + Maintenance.RESERVE_RECHECK_DAYS
-            val (b, r2) = Maintenance.respond(a, QuestDef.ENGINE_OIL, QuestResponse.LATER, 20_010.0, later)!!
-            assertTrue(first.name, r2.isEmpty())
-            val (c, r3) = Maintenance.respond(b, QuestDef.ENGINE_OIL, QuestResponse.DONE, 20_020.0, later + Maintenance.LATER_DAYS)!!
-            assertTrue(first.name, r3.isEmpty())
-            assertEquals(1, gears(c))
+            val (b, g2) = Maintenance.respond(a, QuestDef.ENGINE_OIL, QuestResponse.LATER, 20_010.0, later)!!
+            assertFalse(first.name, g2)
+            val (c, g3) = Maintenance.respond(b, QuestDef.ENGINE_OIL, QuestResponse.DONE, 20_020.0, later + Maintenance.LATER_DAYS)!!
+            assertFalse(first.name, g3)
+            assertEquals(0, gears(c))
+            assertTrue(first.name, c.materials.isEmpty())
+            assertEquals(first.name, 1, c.maintenance.records.getValue(QuestDef.ENGINE_OIL.id).completions) // 기록은 남는다
             assertTrue(StateValidator.isValid(c))
         }
     }
@@ -446,22 +450,21 @@ class VillageCoreTest {
         assertFalse(Maintenance.status(QuestDef.ENGINE_OIL, a, null, d + 2)!!.open)
     }
 
-    @Test fun quest_done_withServiceKm_givesMemorial_andBecomesBase() {
+    @Test fun quest_done_withServiceKm_growsWorkshop_noMemorial_andBecomesBase() {
         val d = day0.toEpochDay()
         val s = withSetup(10_000.0, d)
-        val (a, rw) = Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, 20_300.0, d + 3, serviceKm = 20_050.0)!!
-        assertEquals(setOf(MaterialKind.GEAR, MaterialKind.MEMORIAL), rw.map { it.kind }.toSet())
+        val (a, grew) = Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, 20_300.0, d + 3, serviceKm = 20_050.0)!!
+        assertTrue(grew); assertEquals(1, a.maintenance.workshopLevel)
+        assertTrue(a.materials.isEmpty()) // 증빙 '했어요'도 기념패를 주지 않는다
         assertEquals(20_050.0, Maintenance.status(QuestDef.ENGINE_OIL, a, 20_300.0, d + 3)!!.baseKm!!, 0.0) // 입력한 정비 당시 값이 기준
-        assertTrue(rw.first { it.kind == MaterialKind.MEMORIAL }.tag.contains("20050km"))
         // 현재 주행거리보다 큰 값·음수·비정상 값, '했어요' 외 응답의 입력은 거부
         for (bad in listOf(20_301.0, -1.0, Double.NaN)) assertNull(Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, 20_300.0, d + 3, bad))
         assertNull(Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, null, d + 3, 20_000.0)) // 주행거리를 모르면 입력 불가
         assertNull(Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.LATER, 20_300.0, d + 3, 20_000.0))
-        assertTrue(rw.none { it.tag.contains("확인") })
         assertTrue(StateValidator.isValid(a))
     }
 
-    /** 과거 정비 값을 넣어 곧바로 다시 도래시키며 '했어요'를 반복해도 보상·공방 증축은 처음 한 번뿐(r2 회귀). */
+    /** 과거 정비 값을 넣어 곧바로 다시 도래시키며 '했어요'를 반복해도 공방 증축은 처음 한 번뿐(r2 회귀). 재료는 0. */
     @Test fun quest_done_oldServiceValues_noRewardLoop() {
         val d = day0.toEpochDay()
         var s = withSetup(10_000.0, d)
@@ -469,12 +472,13 @@ class VillageCoreTest {
         var odo = 50_000.0
         repeat(20) {
             for (km in listOf(0.0, 30_000.0, odo - 9_999.0, odo)) {
-                Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, odo, d + 1, km)?.let { (n, rw) -> s = n; got += rw.size }
+                Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, odo, d + 1, km)?.let { (n, grew) -> s = n; if (grew) got++ }
             }
             odo += 2
         }
-        assertEquals(2, got) // 처음 한 번(톱니 + 기념패)뿐
+        assertEquals(1, got) // 처음 한 번뿐
         assertEquals(1, s.maintenance.workshopLevel)
+        assertTrue(s.materials.isEmpty())
         val st = Maintenance.status(QuestDef.ENGINE_OIL, s, 50_000.0, d + 1)!!
         assertTrue(st.baseKm!! >= 40_001.0) // 기준은 입력값을 따라가지만 보상은 늘지 않는다
     }
@@ -533,8 +537,8 @@ class VillageCoreTest {
         // 체크인(설정한 날 기준)은 영향 없음
         assertFalse(Maintenance.status(QuestDef.COOLANT_LEVEL, s, 30_000.0, d)!!.open)
         // '다음에'는 날짜로만 다시 연다(기준 미확인이라 km 재알림 없음)
-        val (later, rw) = Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.LATER, 30_000.0, d)!!
-        assertEquals(1, rw.size)
+        val (later, grew) = Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.LATER, 30_000.0, d)!!
+        assertFalse(grew); assertEquals(s.materials, later.materials) // 재료 없음
         assertFalse(Maintenance.status(QuestDef.ENGINE_OIL, later, 99_000.0, d + 1)!!.open)
         assertTrue(Maintenance.status(QuestDef.ENGINE_OIL, later, 30_000.0, d + Maintenance.LATER_DAYS)!!.open)
         // '했어요'로 정비한 날을 넣으면 그때부터 기준이 생긴다(직전 기준이 없으니 하한 없음)
@@ -544,67 +548,145 @@ class VillageCoreTest {
         assertTrue(StateValidator.isValid(done))
     }
 
-    /** 세 응답 모두 같은 톱니 1개. 공방 증축은 '했어요' + 증빙(날짜·주행거리 입력)일 때만. */
-    @Test fun quest_sameGearForAllResponses_workshopOnlyWithEvidence() {
+    /** 세 응답 모두 재료 없음. 공방 증축은 '했어요' + 증빙(날짜·주행거리 입력)일 때만. */
+    @Test fun quest_noMaterialsForAnyResponse_workshopOnlyWithEvidence() {
         val d = day0.toEpochDay()
         val s = withSetup(10_000.0, d - 10, oilKm = 5_000, months = 12, today = d)
         for (resp in QuestResponse.entries) {
-            val (n, rw) = Maintenance.respond(s, QuestDef.ENGINE_OIL, resp, 16_000.0, d)!!
-            assertEquals(resp.name, listOf(MaterialKind.GEAR), rw.map { it.kind })
+            val (n, grew) = Maintenance.respond(s, QuestDef.ENGINE_OIL, resp, 16_000.0, d)!!
+            assertFalse(resp.name, grew)
+            assertTrue(resp.name, n.materials.isEmpty())
             assertEquals(resp.name, 0, n.maintenance.workshopLevel)
         }
         for ((km, day) in listOf(15_000.0 to null, null to d - 3, 15_000.0 to d - 3)) {
-            val (n, rw) = Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, 16_000.0, d, km, day)!!
-            assertEquals(setOf(MaterialKind.GEAR, MaterialKind.MEMORIAL), rw.map { it.kind }.toSet())
+            val (n, grew) = Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, 16_000.0, d, km, day)!!
+            assertTrue(grew)
+            assertTrue(n.materials.isEmpty())
             assertEquals(1, n.maintenance.workshopLevel)
         }
     }
 
-    /** 예약했어요·다음에(톱니) 뒤 증빙 '했어요'도 기념패·증축을 받는다. 같은 주기에 반복하면 0. */
+    /** 예약했어요·다음에 뒤 증빙 '했어요'도 증축한다. 같은 주기에 반복하면 0. 재료는 어느 단계에서도 없다. */
     @Test fun quest_evidenceAfterSnooze_stillGrowsWorkshop_once() {
         val d = day0.toEpochDay()
         for (first in listOf(QuestResponse.LATER, QuestResponse.RESERVED)) {
             val s = withSetup(10_000.0, d - 10, oilKm = 5_000, months = 12, today = d)
-            val (a, r1) = Maintenance.respond(s, QuestDef.ENGINE_OIL, first, 16_000.0, d)!!
-            assertEquals(listOf(MaterialKind.GEAR), r1.map { it.kind })
+            val (a, g1) = Maintenance.respond(s, QuestDef.ENGINE_OIL, first, 16_000.0, d)!!
+            assertFalse(first.name, g1)
             val back = d + Maintenance.RESERVE_RECHECK_DAYS
-            val (b, r2) = Maintenance.respond(a, QuestDef.ENGINE_OIL, QuestResponse.DONE, 16_100.0, back, 15_000.0, d - 3)!!
-            assertEquals(first.name, listOf(MaterialKind.MEMORIAL), r2.map { it.kind }) // 톱니는 이미 받음
+            val (b, g2) = Maintenance.respond(a, QuestDef.ENGINE_OIL, QuestResponse.DONE, 16_100.0, back, 15_000.0, d - 3)!!
+            assertTrue(first.name, g2)
             assertEquals(first.name, 1, b.maintenance.workshopLevel)
             // 같은 날 과거 값으로 다시 재도래시켜 증빙 '했어요'를 반복해도 추가 없음
             var c = b
             var more = 0
             for (km in listOf(15_001.0, 15_002.0, 15_003.0)) {
-                Maintenance.respond(c, QuestDef.ENGINE_OIL, QuestResponse.DONE, 16_100.0, back, km, d - 3)?.let { (n, rw) -> c = n; more += rw.size }
+                Maintenance.respond(c, QuestDef.ENGINE_OIL, QuestResponse.DONE, 16_100.0, back, km, d - 3)?.let { (n, grew) -> c = n; if (grew) more++ }
             }
             assertEquals(first.name, 0, more)
             assertEquals(first.name, 1, c.maintenance.workshopLevel)
+            assertTrue(first.name, c.materials.isEmpty())
             assertTrue(StateValidator.isValid(c))
         }
     }
 
-    /** 보상 중복 방지 회귀: 다음에 → 과거 값으로 했어요 → 곧바로 재도래 → 다음에 … 를 반복해도 보상은 한 번. */
+    /** 증축 중복 방지 회귀: 다음에 → 과거 값으로 했어요 → 곧바로 재도래 → 다음에 … 를 반복해도 증축은 한 번. */
     @Test fun quest_rewardDedup_survivesHistoryRewrites() {
         val d = day0.toEpochDay()
         var s = withSetup(10_000.0, d - 10, oilKm = 5_000, months = 12, today = d)
-        var gearsGot = 0
+        var growths = 0
         var responded = 0
         var day = d
         repeat(20) { i ->
             val resp = listOf(QuestResponse.LATER, QuestResponse.DONE, QuestResponse.RESERVED)[i % 3]
             val km = if (resp == QuestResponse.DONE) 10_000.0 + i else null
             val sd = if (resp == QuestResponse.DONE) d - 9 else null
-            Maintenance.respond(s, QuestDef.ENGINE_OIL, resp, 40_000.0, day, km, sd)?.let { (n, rw) -> s = n; gearsGot += rw.size; responded++ }
+            Maintenance.respond(s, QuestDef.ENGINE_OIL, resp, 40_000.0, day, km, sd)?.let { (n, grew) -> s = n; if (grew) growths++; responded++ }
             day += 14
         }
         assertEquals(20, responded) // 과거 값 때문에 매번 다시 열려 응답 자체는 계속 받는다
-        assertEquals(2, gearsGot) // 톱니 1(첫 다음에) + 기념패 1(첫 증빙 했어요), 이후 반복은 0
-        assertEquals(1, s.maintenance.workshopLevel) // 증빙 보상 1회만큼만 증축
-        // 마지막 보상(40,000km)에서 한 주기(5,000km)가 지나면 다시 보상
+        assertEquals(1, growths) // 첫 증빙 했어요 한 번, 이후 반복은 0
+        assertEquals(1, s.maintenance.workshopLevel)
+        assertTrue(s.materials.isEmpty())
+        // 마지막 증축(40,000km)에서 한 주기(5,000km)가 지나면 다시 증축 가능
         val open = Maintenance.status(QuestDef.ENGINE_OIL, s, 45_000.0, d + 15)!!
-        assertTrue(open.rewardAvailable)
+        assertTrue(open.growthAvailable)
         assertTrue(StateValidator.isValid(s))
     }
+
+    /**
+     * 회귀(0.1.4 P2): 정비 응답은 어떤 조합으로도 재료를 주지 않는다. 이전 버전이 저장한 공방 톱니·정비 기념패와
+     * 이전 보상 기록 필드는 그대로 남고 저장 검증을 통과한다.
+     */
+    @Test fun quest_responsesNeverGrantMaterials_legacyItemsKept() {
+        val d = day0.toEpochDay()
+        val legacy = listOf(
+            Material("gear-engine-oil-0", MaterialKind.GEAR, d - 30, "quest-engine-oil-0", "이전 응답", placedSlot = 2),
+            Material("memo-engine-oil-0", MaterialKind.MEMORIAL, d - 30, "quest-engine-oil-0", "이전 기록"),
+        )
+        val base = withSetup(10_000.0, d - 400, oilKm = 5_000, months = 6, today = d)
+        var s = base.copy(
+            materials = base.materials + legacy,
+            maintenance = base.maintenance.copy(
+                records = mapOf(QuestDef.ENGINE_OIL.id to io.github.drivevillage.core.village.QuestRecord(10_000.0, d - 400, 1, cycle = 1, rewardedCycle = 0, rewardAnchorKm = 9_000.0, rewardAnchorDay = d - 30)),
+                workshopLevel = 1,
+            ),
+        )
+        assertTrue(StateValidator.isValid(s))
+        var odo = 20_000.0
+        var day = d
+        var answered = 0
+        repeat(30) { i ->
+            for (q in QuestDef.entries) {
+                val resp = QuestResponse.entries[(i + q.ordinal) % 3]
+                val ev = resp == QuestResponse.DONE && i % 2 == 0
+                Maintenance.respond(s, q, resp, odo, day, if (ev) odo - 10 else null, if (ev) day else null)?.let { (n, _) -> s = n; answered++ }
+            }
+            odo += 3_000; day += 40
+        }
+        assertTrue(answered > 30)
+        assertEquals(legacy, s.materials) // 새 아이템 0, 이전 아이템(배치 포함)은 그대로
+        assertTrue(s.maintenance.workshopLevel > 1) // 증축은 계속된다
+        assertTrue(StateValidator.isValid(s))
+    }
+
+    /** 점등 판정: '했어요'로 짝 정비가 모두 닫힐 때만 그 시설이 쉬는 중에서 평상으로 바뀐다. */
+    @Test fun facilities_wokeOnlyWhenAllPairedQuestsClosed() {
+        val d = day0.toEpochDay()
+        val s = withSetup(10_000.0, d)
+        val odo = 20_000.0
+        val day = d + 10 // 엔진오일·타이어 위치(10,000km) 도래
+        assertEquals(setOf(io.github.drivevillage.core.village.Facility.FORGE, io.github.drivevillage.core.village.Facility.WINDMILL), io.github.drivevillage.core.village.Facilities.needingCare(s, odo, day))
+        val (a, _) = Maintenance.respond(s, QuestDef.ENGINE_OIL, QuestResponse.DONE, odo, day)!!
+        assertEquals(setOf(io.github.drivevillage.core.village.Facility.FORGE), io.github.drivevillage.core.village.Facilities.woke(s, a, odo, day))
+        // 풍차는 공기압·위치 두 짝: 공기압 체크인도 열린 날에 하나만 답하면 계속 쉰다
+        val month = LocalDate.ofEpochDay(d).plusMonths(1).toEpochDay()
+        val (b, _) = Maintenance.respond(a, QuestDef.TIRE_ROTATION, QuestResponse.DONE, odo, month)!!
+        assertTrue(io.github.drivevillage.core.village.Facility.WINDMILL in io.github.drivevillage.core.village.Facilities.needingCare(b, odo, month))
+        assertEquals(listOf(QuestDef.TIRE_PRESSURE), io.github.drivevillage.core.village.Facilities.waitingFor(io.github.drivevillage.core.village.Facility.WINDMILL, b, odo, month))
+        val (c, _) = Maintenance.respond(b, QuestDef.TIRE_PRESSURE, QuestResponse.DONE, odo, month)!!
+        assertTrue(io.github.drivevillage.core.village.Facility.WINDMILL in io.github.drivevillage.core.village.Facilities.woke(b, c, odo, month))
+        assertTrue(c.materials.isEmpty())
+    }
+
+    /** 시설 안내 문구: 쉬는 중이면 기다리는 정비, 평상이면 짝 하나. 금지 표현·em dash 없음. */
+    @Test fun facilities_hintAndLines_copyRules() {
+        val forge = io.github.drivevillage.core.village.Facility.FORGE
+        assertEquals("공방은 엔진오일과 짝이에요. 그 정비 때가 되면 잠깐 쉬어요.", io.github.drivevillage.core.village.Facilities.hint(forge, emptyList()))
+        assertEquals("물레방아는 냉각수와 짝이에요. 그 정비 때가 되면 잠깐 쉬어요.", io.github.drivevillage.core.village.Facilities.hint(io.github.drivevillage.core.village.Facility.MILL, emptyList()))
+        assertTrue(io.github.drivevillage.core.village.Facilities.hint(forge, listOf(QuestDef.ENGINE_OIL)).startsWith("엔진오일·필터 교환"))
+        val banned = listOf("밀렸", "남았어요", "놓치지", "스트릭", "연속", "—", "확인했")
+        for (f in io.github.drivevillage.core.village.Facility.entries) {
+            val texts = listOf(f.wakeLine, io.github.drivevillage.core.village.Facilities.hint(f, emptyList()), io.github.drivevillage.core.village.Facilities.hint(f, f.quests.toList()))
+            for (t in texts) {
+                banned.forEach { b -> assertFalse("$b: $t", t.contains(b)) }
+                assertTrue("이모지: $t", t.codePoints().noneMatch { it >= 0x1F000 })
+                assertTrue("숫자: $t", numbersFree(t))
+            }
+        }
+    }
+
+    private fun numbersFree(t: String) = io.github.drivevillage.core.village.DialogueValidator.numbersIn(t).isEmpty()
 
     @Test fun setup_resave_keepsCheckInBaseDay() {
         val d = day0.toEpochDay()

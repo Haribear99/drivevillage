@@ -1,18 +1,23 @@
 package io.github.drivevillage.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -20,8 +25,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -32,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -41,6 +48,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.drivevillage.core.village.AppState
 import io.github.drivevillage.core.village.DueBy
+import io.github.drivevillage.core.village.Facilities
+import io.github.drivevillage.core.village.Facility
 import io.github.drivevillage.core.village.Maintenance
 import io.github.drivevillage.core.village.Missions
 import io.github.drivevillage.core.village.Resident
@@ -62,6 +71,7 @@ fun VillageScreen(vm: VillageViewModel) {
     val now by vm.now.collectAsState()
     val odo by vm.odoKm.collectAsState()
     val voiceOn by vm.voiceOn.collectAsState()
+    val wake by vm.wake.collectAsState()
     val blocked by vm.writesBlocked.collectAsState()
     var tab by remember { mutableStateOf(if (state.maintenance.setup == null && open !is OpenResult.Scene) Tab.WORKSHOP else Tab.SCENE) }
     var selectedMaterial by remember { mutableStateOf<String?>(null) }
@@ -70,7 +80,9 @@ fun VillageScreen(vm: VillageViewModel) {
     val today = vm.today()
     val timeSlot = SceneLedger.slotOf(now, java.time.ZoneId.systemDefault())
 
-    val needingCare = remember(state, odo, today) { io.github.drivevillage.core.village.Facilities.needingCare(state, odo, today) }
+    val needingCare = remember(state, odo, today) { Facilities.needingCare(state, odo, today) }
+    // 시설을 눌렀을 때 마을 아래쪽에 올라오는 안내 시트(응답은 받지 않는다).
+    var sheetFacility by remember { mutableStateOf<Facility?>(null) }
     // ── 마을 전경 ──
     val villagePane: @Composable (Modifier) -> Unit = { paneModifier ->
         BoxWithConstraints(paneModifier) {
@@ -90,40 +102,54 @@ fun VillageScreen(vm: VillageViewModel) {
                         sel != null -> { vm.place(sel, slot); selectedMaterial = null }
                     }
                 },
+                onFacility = { sheetFacility = it },
+                wake = wake,
             )
-            // 주민 이름표
+            // 주민 이름표(20sp): 발밑 가운데
             VillageLayout.residents.forEach { (r, o) ->
                 Text(
-                    r.displayName, color = Color.White, fontSize = 12.sp,
-                    modifier = Modifier.offset(x = maxWidth * o.x - 14.dp, y = maxHeight * o.y + 2.dp)
-                        .background(Color(0x99000000), RoundedCornerShape(6.dp)).padding(horizontal = 5.dp, vertical = 1.dp),
+                    r.displayName, color = Color.White, fontSize = 20.sp, lineHeight = 24.sp,
+                    modifier = Modifier.offset(x = maxWidth * o.x - 27.dp, y = maxHeight * o.y + 2.dp)
+                        .background(Color(0x99000000), RoundedCornerShape(8.dp)).padding(horizontal = 7.dp, vertical = 2.dp),
                 )
             }
-            // 상단 바
-            Row(
-                Modifier.fillMaxWidth().padding(10.dp).background(Color(0x99141A26), RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("DRIVE VILLAGE", color = VillageTheme.accent, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                    val day = SceneLedger.villageDay(state, today)
-                    Text(
-                        listOfNotNull("마을 Lv.${VillageGrowth.level(state)}", day?.let { "${it}일째" }, "공방 ${state.maintenance.workshopLevel}단계", "정차 중에만 열려요").joinToString(" · "),
-                        color = VillageTheme.subtext, fontSize = 12.sp,
-                    )
-                }
-                TextButton(onClick = vm::toggleVoice) { Text(if (voiceOn) "소리 켬" else "소리 끔", fontSize = 13.sp) }
-                TextButton(onClick = vm::closeSilently) { Text("마을 닫기", fontSize = 13.sp) }
-            }
-            // 주민 말풍선
-            bubble?.let { b ->
+            Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
+                // 상단 바: 제목 28sp, 상태 24sp, 버튼 64dp. 넓이가 모자라면 상태 항목이 줄바꿈된다.
                 Column(
-                    Modifier.align(Alignment.TopCenter).offset(y = 70.dp).widthIn(max = 440.dp).padding(horizontal = 16.dp)
-                        .background(Color(0xF2FFF8EC), RoundedCornerShape(16.dp)).padding(14.dp),
+                    Modifier.fillMaxWidth().padding(10.dp).background(Color(0xB3141A26), RoundedCornerShape(16.dp))
+                        .pointerInput(Unit) { detectTapGestures { } } // 바 빈 곳을 눌러도 뒤의 시설이 눌리지 않게
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
                 ) {
-                    Text("${b.resident.displayName} · ${b.resident.role}", color = Color(0xFF8A5A3A), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Text(b.text, color = Color(0xFF2B2420), fontSize = 16.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("DRIVE VILLAGE", color = VillageTheme.accent, style = VillageType.title, maxLines = 1, modifier = Modifier.weight(1f))
+                        BarButton(if (voiceOn) "소리 켬" else "소리 끔", onClick = vm::toggleVoice)
+                        BarButton("마을 닫기", onClick = vm::closeSilently)
+                    }
+                    val day = SceneLedger.villageDay(state, today)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                        listOfNotNull("마을 Lv.${VillageGrowth.level(state)}", day?.let { "${it}일째" }, "공방 ${state.maintenance.workshopLevel}단계", "정차 중에만 열려요").forEach {
+                            Text(it, color = VillageTheme.text, style = VillageType.body, maxLines = 1)
+                        }
+                    }
                 }
+                // 주민 말풍선(본문 24sp). 안내 시트가 떠 있는 동안은 가린다(작은 마을 화면에서 겹치지 않게).
+                bubble?.takeIf { sheetFacility == null }?.let { b ->
+                    Column(
+                        Modifier.align(Alignment.CenterHorizontally).widthIn(max = 560.dp).padding(horizontal = 16.dp)
+                            .background(Color(0xF2FFF8EC), RoundedCornerShape(16.dp)).padding(16.dp),
+                    ) {
+                        Text("${b.resident.displayName} · ${b.resident.role}", color = Color(0xFF8A5A3A), fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.Bold)
+                        Text(b.text, color = Color(0xFF2B2420), style = VillageType.body)
+                    }
+                }
+            }
+            sheetFacility?.let { f ->
+                FacilitySheet(
+                    f, Facilities.hint(f, Facilities.waitingFor(f, state, odo, today)),
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                    onOpenWorkshop = { tab = Tab.WORKSHOP; sheetFacility = null },
+                    onClose = { sheetFacility = null },
+                )
             }
             if (blocked) {
                 Text(
@@ -178,6 +204,38 @@ fun VillageScreen(vm: VillageViewModel) {
                 villagePane(Modifier.weight(1.25f).fillMaxHeight())
                 panelPane(Modifier.weight(1f).fillMaxHeight())
             }
+        }
+    }
+}
+
+/** 마을 상단 바 버튼: 높이 64dp 이상, 24sp. 짙은 바 위라 크림 테두리·글자. */
+@Composable
+private fun BarButton(text: String, onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick, modifier = Modifier.heightIn(min = Dimens.touch), shape = RoundedCornerShape(Dimens.buttonRadius),
+        contentPadding = PaddingValues(horizontal = Dimens.buttonPadCompact, vertical = Dimens.buttonPadV),
+        border = BorderStroke(Dimens.outlineWidth, VillageTheme.text),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = VillageTheme.text),
+    ) { Text(text, style = VillageType.label, maxLines = 1) }
+}
+
+/**
+ * 시설 안내 시트: 이름(Gmarket Sans) + 1~2줄 설명 + 버튼 2개(64dp). 쉬는 시설이면 기다리는 정비,
+ * 평상이면 그 시설의 짝 하나만 소개한다(누를 때만 보이는 pull 방식). 정비 응답은 여기서 받지 않는다.
+ */
+@Composable
+private fun FacilitySheet(f: Facility, hint: String, modifier: Modifier, onOpenWorkshop: () -> Unit, onClose: () -> Unit) {
+    PaperCard(
+        modifier.padding(16.dp)
+            .border(Dimens.outlineWidth, VillageTheme.ink.copy(alpha = 0.35f), RoundedCornerShape(Dimens.cardRadius))
+            .pointerInput(Unit) { detectTapGestures { } }, // 시트 빈 곳을 눌러도 뒤의 시설·슬롯이 눌리지 않게
+    ) {
+        CardTitle(f.label)
+        CardBody(hint)
+        Spacer(Modifier.height(Dimens.gap - Dimens.inner))
+        ButtonRow {
+            InkButton("정비 탭에서 보기", Modifier.weight(1.7f), selected = true, onClick = onOpenWorkshop)
+            InkButton("닫기", Modifier.weight(1f), onClick = onClose)
         }
     }
 }
@@ -307,7 +365,7 @@ private fun WorkshopPanel(vm: VillageViewModel, state: AppState, odo: Double?, t
         if (currentOdo == null) CardBody("주행거리를 확인하지 못해 지금은 날짜 기준만 봐요.", VillageTheme.inkWarn)
         MoreInfo(
             "응답은 이렇게 기록돼요",
-            "답은 직접 하는 기록이에요(앱은 정비 여부를 알 수 없어요). 했어요·예약했어요·다음에 중 무엇을 눌러도 같은 공방 톱니 1개(부탁 한 주기에 한 번). 정비한 날·거리를 남기면 공방이 커져요(선택). 기념패도 하나 드려요.",
+            "답은 직접 하는 기록이에요(앱은 정비 여부를 알 수 없어요). 어떤 답을 눌러도 재료는 드리지 않아요. 했어요를 누르면 짝이 된 마을 시설이 다시 켜져요. 정비한 날·거리를 남기면 공방이 커져요(선택).",
         )
     }
     val statuses = Maintenance.all(state, currentOdo, today).sortedBy { if (it.open) 0 else 1 }
@@ -344,7 +402,6 @@ private fun QuestCard(vm: VillageViewModel, st: QuestStatus, currentOdo: Double?
                     null -> null
                 }
                 due?.let { CardBody(it, VillageTheme.inkDue) }
-                if (!st.rewardAvailable) CardBody("응답 보상은 지난 보상 뒤 한 주기가 지나야 다시 받아요.", VillageTheme.inkSub)
                 if (!doneOpen) {
                     ButtonColumn {
                         if (primary) PrimaryButton(QuestResponse.DONE.label, Modifier.fillMaxWidth()) { doneOpen = true }
@@ -355,7 +412,11 @@ private fun QuestCard(vm: VillageViewModel, st: QuestStatus, currentOdo: Double?
                         }
                     }
                 } else {
-                    CardBody("정비한 날을 넣으면 다음 안내가 정확해져요. 정비한 날·거리를 남기면 공방이 커져요(선택).", VillageTheme.inkOk)
+                    CardBody(
+                        if (st.growthAvailable) "정비한 날을 넣으면 다음 안내가 정확해져요. 정비한 날·거리를 남기면 공방이 커져요(선택)."
+                        else "정비한 날을 넣으면 다음 안내가 정확해져요. 공방은 지난 증축 뒤 한 주기가 지나야 다시 커져요.",
+                        VillageTheme.inkOk,
+                    )
                     // 증감 버튼 줄과 기록 버튼 사이도 24dp를 지키도록 한 묶음으로 쌓는다.
                     ButtonColumn {
                         Stepper("정비한 날", "${java.time.LocalDate.ofEpochDay(serviceDay)}", listOf("-1달" to -30.0, "-1일" to -1.0, "+1일" to 1.0)) {
@@ -368,8 +429,8 @@ private fun QuestCard(vm: VillageViewModel, st: QuestStatus, currentOdo: Double?
                         }
                         ButtonColumn {
                             val record = { vm.respondQuest(st.def, QuestResponse.DONE, if (currentOdo != null) serviceKm else null, serviceDay) }
-                            if (primary) PrimaryButton("이 정비 시점으로 기록(+기념패)", Modifier.fillMaxWidth(), onClick = record)
-                            else InkButton("이 정비 시점으로 기록(+기념패)", Modifier.fillMaxWidth(), selected = true, onClick = record)
+                            if (primary) PrimaryButton("이 정비 시점으로 기록", Modifier.fillMaxWidth(), onClick = record)
+                            else InkButton("이 정비 시점으로 기록", Modifier.fillMaxWidth(), selected = true, onClick = record)
                             ButtonRow {
                                 InkButton("지금으로 기록", Modifier.weight(1.6f)) { vm.respondQuest(st.def, QuestResponse.DONE) }
                                 InkButton("취소", Modifier.weight(1f)) { doneOpen = false }
@@ -503,7 +564,7 @@ private fun DecoratePanel(state: AppState, selected: String?, onSelect: (String?
         CardBody("놓인 것 $placedCount / ${io.github.drivevillage.core.village.Decoration.SLOT_COUNT}자리", style = VillageType.bodyStrong)
     }
     if (unplaced.isEmpty()) {
-        PaperCard { CardBody("놓을 것이 없어요. 여정 정산(하루 한 번 재료), 1,000km 이정표, 새 계절, 정비 응답으로 생겨요.", VillageTheme.inkSub) }
+        PaperCard { CardBody("놓을 것이 없어요. 여정 정산(하루 한 번 재료), 1,000km 이정표, 새 계절로 생겨요.", VillageTheme.inkSub) }
     }
     unplaced.forEach { m ->
         val isSel = m.id == selected

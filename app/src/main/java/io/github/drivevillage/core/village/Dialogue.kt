@@ -81,7 +81,7 @@ object Templates {
         t(G, LineContext.CHAT, "꽃밭 자리가 아직 남아 있어요, 재료가 생기면 하나 놓아 봐요."),
         t(G, LineContext.CHAT, "마을 {day}일째, 새싹이 조금 자랐어요."),
         // 정비 완료 자기 신고 직후(공방 장인). 신고한 사실만 말하고 차량 상태는 말하지 않는다.
-        t(C, LineContext.WORKSHOP, "알려 줘서 고마워요, 공방 톱니 하나 챙겨 둘게요."),
+        t(C, LineContext.WORKSHOP, "알려 줘서 고마워요, 다음 때도 제가 기억해 둘게요."),
         t(C, LineContext.WORKSHOP, "답해 줘서 고마워요, 때가 되면 다시 여쭐게요."),
         t(C, LineContext.WORKSHOP, "마을 {day}일째, 공방 장부에 적어 둘게요."),
     )
