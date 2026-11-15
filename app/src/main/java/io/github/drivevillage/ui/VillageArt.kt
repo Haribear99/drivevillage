@@ -17,8 +17,12 @@ import kotlinx.coroutines.withContext
 class VillageArt(
     val bg: ImageBitmap,
     val forge: ImageBitmap,
-    val mill: ImageBitmap,
-    val windmill: ImageBitmap,
+    /** 물레방아: 바퀴 없는 몸체 + 바퀴(정면 원형, 이미지 중심이 축). 바퀴만 돈다. */
+    val millBody: ImageBitmap,
+    val millWheel: ImageBitmap,
+    /** 풍차: 날개 없는 탑 + 날개(정면 원형, 중심이 허브). 날개만 돈다. */
+    val windmillTower: ImageBitmap,
+    val windmillBlades: ImageBitmap,
     val lamp: ImageBitmap,
     val garden: ImageBitmap,
     val npc: Map<Resident, ImageBitmap>,
@@ -51,8 +55,10 @@ class VillageArt(
             VillageArt(
                 bg = img(R.drawable.vg_bg),
                 forge = img(R.drawable.vg_forge),
-                mill = img(R.drawable.vg_mill),
-                windmill = img(R.drawable.vg_windmill),
+                millBody = img(R.drawable.vg_mill_body),
+                millWheel = img(R.drawable.vg_mill_wheel),
+                windmillTower = img(R.drawable.vg_windmill_tower),
+                windmillBlades = img(R.drawable.vg_windmill_blades),
                 lamp = img(R.drawable.vg_lamp),
                 garden = img(R.drawable.vg_garden),
                 npc = mapOf(

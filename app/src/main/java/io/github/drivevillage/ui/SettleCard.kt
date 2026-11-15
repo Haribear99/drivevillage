@@ -1,5 +1,9 @@
 package io.github.drivevillage.ui
 
+import android.content.ContentResolver
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
@@ -22,13 +26,16 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -43,14 +50,27 @@ import io.github.drivevillage.core.village.SceneRecord
 import io.github.drivevillage.core.village.SettleReveal
 import kotlinx.coroutines.launch
 
-/** 시스템 '애니메이션 끄기'(배율 0)인지. 화면이 처음 그려질 때 한 번 읽는다. */
+/**
+ * 시스템 '애니메이션 끄기'(배율 0)인지. 앱이 떠 있는 동안 설정을 바꿔도 바로 반영된다
+ * ([Settings.Global.ANIMATOR_DURATION_SCALE]를 ContentObserver로 지켜본다).
+ */
 @Composable
 internal fun rememberReduceMotion(): Boolean {
-    val ctx = LocalContext.current
-    return remember {
-        runCatching { Settings.Global.getFloat(ctx.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false)
+    val resolver = LocalContext.current.contentResolver
+    val state = remember(resolver) { mutableStateOf(readReduceMotion(resolver)) }
+    DisposableEffect(resolver) {
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) { state.value = readReduceMotion(resolver) }
+        }
+        runCatching { resolver.registerContentObserver(Settings.Global.getUriFor(Settings.Global.ANIMATOR_DURATION_SCALE), false, observer) }
+        state.value = readReduceMotion(resolver) // 처음 읽은 뒤 등록하기 전에 바뀐 경우
+        onDispose { runCatching { resolver.unregisterContentObserver(observer) } }
     }
+    return state.value
 }
+
+private fun readReduceMotion(resolver: ContentResolver): Boolean =
+    runCatching { Settings.Global.getFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false)
 
 /** 마을 그래픽(재료 아이콘 포함). 마을 전경과 같은 캐시([VillageArt.load])를 쓴다. 준비 전에는 null. */
 @Composable
@@ -62,8 +82,8 @@ internal fun rememberVillageArt(): VillageArt? {
 
 /**
  * 여정 정산의 첫 카드(+ 기억 태그 카드). 위에서 아래로 헤더 → 거리 → 재료 칩 → 도장 → 기억 태그.
- * 연출은 정산 id마다 한 번: 거리 카운트업(약 1초) → 칩 착지 → 도장(전체 3.5초 이내). 위치·투명도·크기와 숫자만 바뀌고
- * 글자는 0초부터 자리에 있다. 카드나 태그를 한 번 누르면 바로 최종 상태가 되고, 가만 두어도 카드는 닫히지 않는다.
+ * 연출은 정산 id마다 한 번: 거리 강조(약 1초) → 칩 착지 → 도장(전체 3.5초 이내). 위치·투명도·크기만 바뀌고
+ * 글자와 숫자는 0초부터 최종 값으로 자리에 있다. 카드나 태그를 한 번 누르면 바로 최종 상태가 되고, 가만 두어도 카드는 닫히지 않는다.
  * 애니메이션 끄기면 처음부터 최종 상태.
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -109,13 +129,18 @@ internal fun SceneSettleCards(vm: VillageViewModel, open: OpenResult.Scene, rec:
                 },
                 VillageTheme.inkSub,
             )
-            // ② 거리(가장 큰 글자). 최종 숫자를 투명하게 깔아 자리를 고정하고, 그 위에 세는 숫자를 그린다.
+            // ② 거리(가장 큰 글자). 최종 숫자를 0초부터 보이고, 왼쪽 아래를 기준으로 조금 작고 흐린 데서 제자리로 자란다(크기·투명도만).
             val km = kotlin.math.floor(rec.deltaKm).toLong()
             Row(Modifier.clearAndSetSemantics { contentDescription = "${km}km 달렸어요" }) {
-                Box(Modifier.alignByBaseline()) {
-                    Text("${km}km", color = VillageTheme.ink, style = VillageType.display, modifier = Modifier.graphicsLayer { alpha = 0f })
-                    Text("${SettleReveal.distanceAt(km, t)}km", color = VillageTheme.ink, style = VillageType.display)
-                }
+                Text(
+                    "${km}km", color = VillageTheme.ink, style = VillageType.display,
+                    modifier = Modifier.alignByBaseline().graphicsLayer {
+                        val s = SettleReveal.distanceScale(t)
+                        scaleX = s; scaleY = s
+                        alpha = SettleReveal.distanceAlpha(t)
+                        transformOrigin = TransformOrigin(0f, 1f)
+                    },
+                )
                 Text(" 달렸어요", color = VillageTheme.ink, style = VillageType.body, modifier = Modifier.alignByBaseline())
             }
             // ③ 재료 칩(같은 종류는 ×n으로 묶음, 최대 4개). 착지 전에도 흐리게 보여 0초부터 읽힌다.

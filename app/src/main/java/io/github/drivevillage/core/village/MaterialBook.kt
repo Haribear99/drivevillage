@@ -3,12 +3,21 @@ package io.github.drivevillage.core.village
 /**
  * 재료 도감(꾸미기 탭)의 순수 계산. 저장 상태를 바꾸지 않고 읽기만 한다.
  *
- * - 12종을 늘 같은 순서([MaterialKind] 선언 순서: 정산 재료 → 이정표 → 계절 → 예전 정비 기념품)로 보여 준다.
+ * - 늘 같은 순서([MaterialKind] 선언 순서: 정산 재료 → 이정표 → 계절 → 예전 정비 기념품)로 보여 준다.
+ * - 예전 정비 기념품(공방 톱니·정비 기념패)은 새로 생기지 않으므로, 둘 중 하나도 가진 적이 없으면 숨기고 10종만 보여 준다.
+ *   하나라도 가지고 있으면 12종 모두 보여 준다. 진행도 분모도 보이는 종류 수를 따른다.
  * - 한 번이라도 가진 종류는 '만났어요'. 아이템은 지워지지 않으므로 지금 가진 수 = 만난 뒤 모은 수다.
  * - 획득 계기 문구는 실제 지급 규칙([SceneLedger.settle])과 같아야 한다. 정비 응답은 재료를 주지 않는다.
  */
 object MaterialBook {
     val ORDER: List<MaterialKind> = MaterialKind.entries
+
+    /** 새로 생기지 않는 예전 버전의 기념품(0.1.3까지의 정비 응답 보상). */
+    private fun retired(kind: MaterialKind): Boolean = kind.source == ItemSource.MAINTENANCE || kind.source == ItemSource.MEMORIAL
+
+    /** 도감에 보이는 종류(고정 순서). 예전 기념품을 하나도 갖지 않았으면 그 둘을 뺀다. */
+    fun visibleKinds(state: AppState): List<MaterialKind> =
+        if (state.materials.any { retired(it.kind) }) ORDER else ORDER.filterNot { retired(it) }
 
     /** 도감 한 칸. [unplaced]는 마을에 아직 놓지 않은 것(최근에 받은 순: 방금 받은 기억이 먼저 보인다). */
     data class Entry(val kind: MaterialKind, val owned: Int, val unplaced: List<Material>) {
@@ -18,7 +27,7 @@ object MaterialBook {
 
     fun entries(state: AppState): List<Entry> {
         val byKind = state.materials.groupBy { it.kind }
-        return ORDER.map { k ->
+        return visibleKinds(state).map { k ->
             val all = byKind[k].orEmpty()
             Entry(k, all.size, all.filter { it.placedSlot == null }.sortedWith(compareByDescending<Material> { it.epochDay }.thenBy { it.id }))
         }
@@ -26,7 +35,7 @@ object MaterialBook {
 
     fun metCount(state: AppState): Int = state.materials.mapTo(HashSet()) { it.kind }.size
 
-    fun progressLabel(state: AppState): String = "${metCount(state)}/${ORDER.size} 만났어요"
+    fun progressLabel(state: AppState): String = "${metCount(state)}/${visibleKinds(state).size} 만났어요"
 
     /** 보유 수 칩. 1개 이하면 칩을 그리지 않는다(null). */
     fun countChip(owned: Int): String? = if (owned <= 1) null else "×$owned"
@@ -59,11 +68,15 @@ object MaterialBook {
     }
 
     /**
-     * 격자 열 수: 12의 약수(6·4·3) 중 칸이 [minCellDp] 이상인 가장 많은 열. 셋 다 안 되면 2열.
-     * 열 수를 12의 약수로 두어 마지막 줄이 비지 않게 한다.
+     * 격자 열 수: 칸 수 [count]의 약수(6·5·4·3) 중 칸이 [minCellDp] 이상인 가장 많은 열(마지막 줄이 비지 않게).
+     * 약수가 하나도 안 들어가면 들어가는 가장 많은 열(마지막 줄이 덜 찬다), 그것도 안 되면 2열.
+     * 12칸이면 예전과 같다(6·4·3). 10칸이면 세로 패널 5열, 가로 패널 4열(4·4·2).
      */
-    fun columns(widthDp: Float, gapDp: Float, minCellDp: Float): Int =
-        listOf(6, 4, 3).firstOrNull { c -> (widthDp - gapDp * (c - 1)) / c >= minCellDp } ?: 2
+    fun columns(widthDp: Float, gapDp: Float, minCellDp: Float, count: Int = ORDER.size): Int {
+        fun fits(c: Int) = (widthDp - gapDp * (c - 1)) / c >= minCellDp
+        val candidates = 6 downTo 3
+        return candidates.firstOrNull { count % it == 0 && fits(it) } ?: candidates.firstOrNull { fits(it) } ?: 2
+    }
 
     /**
      * 이번 화면에서 테두리 광택을 한 번 보여 줄 종류. 이번 정산으로 새로 받은 것 중 아직 광택을 보여 주지 않은 아이템의 종류.
@@ -86,11 +99,15 @@ object RevealOnce {
 
 /**
  * 정산 카드 연출 타임라인(설계 가설값, 화면으로 조정). 모든 값은 연출 시작 뒤 경과 ms의 순수 함수다.
- * 거리 카운트업 약 1초 → 재료 칩 차례로 착지 → 도장. 전체는 [MAX_MS] 안에서 끝난다.
- * 핵심 정보(헤더·칩 글자·도장 문구)는 0초부터 화면에 있고, 여기서 정하는 것은 위치·투명도·숫자뿐이다.
+ * 거리 강조 약 1초 → 재료 칩 차례로 착지 → 도장. 전체는 [MAX_MS] 안에서 끝난다.
+ * 핵심 정보(헤더·거리 숫자·칩 글자·도장 문구)는 0초부터 최종 값 그대로 화면에 있고, 여기서 정하는 것은 위치·크기·투명도뿐이다.
+ * (거리를 0km부터 세어 올리면 잠깐 틀린 숫자가 보여서, 최종 숫자를 처음부터 보이고 크기·투명도만 움직인다.)
  */
 object SettleReveal {
     const val COUNT_MS = 1_000L
+    /** 거리 숫자가 강조되기 전의 크기·투명도(0초부터 읽히도록 투명도는 0이 아니다). 끝나면 1·1. */
+    const val DISTANCE_SCALE_FROM = 0.88f
+    const val DISTANCE_ALPHA_FROM = 0.45f
     const val CHIP_START_MS = 800L
     const val CHIP_STEP_MS = 400L
     const val CHIP_MS = 450L
@@ -112,9 +129,14 @@ object SettleReveal {
     /** 처음 빠르고 끝에 느려지는 곡선(3차). */
     fun easeOut(p: Float): Float { val q = 1f - p.coerceIn(0f, 1f); return 1f - q * q * q }
 
-    /** 카운트업 중 보이는 거리. 끝나면 정확히 [finalKm]. */
-    fun distanceAt(finalKm: Long, t: Long): Long =
-        if (t >= COUNT_MS) finalKm else (finalKm * easeOut(progress(t, 0, COUNT_MS))).toLong().coerceIn(0, finalKm)
+    /** 거리 강조 진행도(0→1, 약 1초). 숫자 자체는 바뀌지 않는다. */
+    fun distanceAt(t: Long): Float = progress(t, 0, COUNT_MS)
+
+    /** 거리 숫자의 크기 배율: [DISTANCE_SCALE_FROM]에서 1로 자란다(최종 자리보다 커지지 않아 옆 글자를 덮지 않는다). */
+    fun distanceScale(t: Long): Float = DISTANCE_SCALE_FROM + (1f - DISTANCE_SCALE_FROM) * easeOut(distanceAt(t))
+
+    /** 거리 숫자의 투명도: [DISTANCE_ALPHA_FROM]에서 1로. */
+    fun distanceAlpha(t: Long): Float = DISTANCE_ALPHA_FROM + (1f - DISTANCE_ALPHA_FROM) * distanceAt(t)
 
     fun chipAt(index: Int, t: Long): Float = progress(t, CHIP_START_MS + CHIP_STEP_MS * index, CHIP_MS)
 

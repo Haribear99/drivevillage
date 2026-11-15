@@ -29,14 +29,31 @@ class MaterialBookTest {
 
     // ── 도감 상태 ──
 
-    @Test fun entries_alwaysTwelve_inFixedDeclarationOrder() {
+    private val tenKinds = MaterialKind.entries.filter { it != MaterialKind.GEAR && it != MaterialKind.MEMORIAL }
+
+    @Test fun entries_tenWithoutRetired_inFixedDeclarationOrder() {
+        // 예전 기념품(공방 톱니·정비 기념패)을 한 번도 갖지 않았으면 그 둘은 도감에 없다.
         val e = MaterialBook.entries(AppState())
-        assertEquals(12, e.size)
-        assertEquals(MaterialKind.entries.toList(), e.map { it.kind })
+        assertEquals(10, e.size)
+        assertEquals(tenKinds, e.map { it.kind })
         assertTrue(e.none { it.met })
+        assertTrue(e.none { it.kind == MaterialKind.GEAR || it.kind == MaterialKind.MEMORIAL })
         // 순서는 보유 여부와 무관하게 고정
         val owned = AppState(materials = listOf(mat("a", MaterialKind.WINTER_STAR), mat("b", MaterialKind.WOOD)))
-        assertEquals(MaterialKind.entries.toList(), MaterialBook.entries(owned).map { it.kind })
+        assertEquals(tenKinds, MaterialBook.entries(owned).map { it.kind })
+    }
+
+    @Test fun entries_allTwelve_whenAnyRetiredOwned() {
+        // 톱니 하나만 가져도 12종 모두(기념패 칸 포함) 보이고, 순서는 선언 순서 그대로.
+        val gear = AppState(materials = listOf(mat("g", MaterialKind.GEAR), mat("w", MaterialKind.WOOD)))
+        val e = MaterialBook.entries(gear)
+        assertEquals(MaterialKind.entries.toList(), e.map { it.kind })
+        assertTrue(e.first { it.kind == MaterialKind.GEAR }.met)
+        assertFalse(e.first { it.kind == MaterialKind.MEMORIAL }.met)
+        // 기념패만 가져도(마을에 놓여 있어도) 12종
+        val memorial = AppState(materials = listOf(mat("m", MaterialKind.MEMORIAL, slot = 3)))
+        assertEquals(12, MaterialBook.entries(memorial).size)
+        assertEquals(MaterialKind.entries.toList(), MaterialBook.visibleKinds(memorial))
     }
 
     @Test fun entries_countOwnedPlacedUnplaced_newestUnplacedFirst() {
@@ -55,8 +72,19 @@ class MaterialBookTest {
     @Test fun progress_countsDistinctKinds_notItems() {
         val s = AppState(materials = listOf(mat("a", MaterialKind.WOOD), mat("b", MaterialKind.WOOD), mat("c", MaterialKind.MONUMENT, slot = 2)))
         assertEquals(2, MaterialBook.metCount(s))
+        assertEquals("2/10 만났어요", MaterialBook.progressLabel(s))
+        assertEquals("0/10 만났어요", MaterialBook.progressLabel(AppState()))
+    }
+
+    @Test fun progress_denominatorTwelve_whenRetiredOwned() {
+        val s = AppState(materials = listOf(mat("a", MaterialKind.WOOD), mat("g", MaterialKind.GEAR), mat("g2", MaterialKind.GEAR)))
+        assertEquals(2, MaterialBook.metCount(s))
         assertEquals("2/12 만났어요", MaterialBook.progressLabel(s))
-        assertEquals("0/12 만났어요", MaterialBook.progressLabel(AppState()))
+        // 10종을 모두 만나면 10/10(분모를 넘지 않는다)
+        val all = AppState(materials = tenKinds.mapIndexed { i, k -> mat("k$i", k) })
+        assertEquals("10/10 만났어요", MaterialBook.progressLabel(all))
+        val allPlus = AppState(materials = MaterialKind.entries.mapIndexed { i, k -> mat("k$i", k) })
+        assertEquals("12/12 만났어요", MaterialBook.progressLabel(allPlus))
     }
 
     @Test fun countChip_hiddenForZeroOrOne() {
@@ -77,6 +105,20 @@ class MaterialBookTest {
             val c = MaterialBook.columns(w, 24f, 64f)
             assertEquals(0, 12 % c)
             assertTrue("w=$w c=$c", (w - 24f * (c - 1)) / c >= 64f)
+        }
+        assertEquals(4, MaterialBook.columns(367f, 24f, 64f, count = 12))
+    }
+
+    @Test fun columns_ten_divisorWhenItFits_elseWidestThatFits() {
+        // 세로 패널: 5열(칸 약 117dp) → 5·5로 마지막 줄이 비지 않는다
+        assertEquals(5, MaterialBook.columns(680f, 24f, 64f, count = 10))
+        // 가로 패널: 5열은 칸이 64dp 미만이라 안 되고, 2열(칸 171dp)로 길어지기보다 4열(4·4·2)
+        assertEquals(4, MaterialBook.columns(367f, 24f, 64f, count = 10))
+        assertEquals(3, MaterialBook.columns(300f, 24f, 64f, count = 10))
+        assertEquals(2, MaterialBook.columns(200f, 24f, 64f, count = 10))
+        for (w in listOf(200f, 250f, 300f, 367f, 455f, 680f)) {
+            val c = MaterialBook.columns(w, 24f, 64f, count = 10)
+            assertTrue("w=$w c=$c", c == 2 || (w - 24f * (c - 1)) / c >= 64f)
         }
     }
 
@@ -163,18 +205,31 @@ class MaterialBookTest {
             assertTrue(total >= SettleReveal.COUNT_MS)
             // 끝(=건너뛰기 시점 MAX_MS 포함)에서는 모두 최종 상태
             for (t in listOf(total, SettleReveal.MAX_MS)) {
-                assertEquals(1234L, SettleReveal.distanceAt(1234L, t))
+                assertEquals(1f, SettleReveal.distanceAt(t), 0f)
+                assertEquals(1f, SettleReveal.distanceScale(t), 0f)
+                assertEquals(1f, SettleReveal.distanceAlpha(t), 0f)
                 repeat(chips) { i -> assertEquals(1f, SettleReveal.chipAt(i, t), 0f) }
                 if (stamp) assertEquals(1f, SettleReveal.stampAt(chips, t), 0f)
             }
         }
     }
 
-    @Test fun timeline_order_countThenChipsThenStamp() {
-        // 거리 카운트업은 약 1초
-        assertEquals(0L, SettleReveal.distanceAt(500L, 0))
-        assertTrue(SettleReveal.distanceAt(500L, 500) in 1..499)
-        assertEquals(500L, SettleReveal.distanceAt(500L, SettleReveal.COUNT_MS))
+    @Test fun timeline_order_distanceThenChipsThenStamp() {
+        // 거리 강조는 약 1초. 숫자는 바뀌지 않고(타임라인에 숫자 입력이 없다) 크기·투명도만 움직인다.
+        assertEquals(0f, SettleReveal.distanceAt(0), 0f)
+        assertTrue(SettleReveal.distanceAt(500) in 0.01f..0.99f)
+        assertEquals(1f, SettleReveal.distanceAt(SettleReveal.COUNT_MS), 0f)
+        // 0초에도 읽힌다(투명도 0이 아님), 최종 자리보다 커지지 않는다(옆 글자를 덮지 않음)
+        assertEquals(SettleReveal.DISTANCE_ALPHA_FROM, SettleReveal.distanceAlpha(0), 0f)
+        assertTrue(SettleReveal.distanceAlpha(0) >= 0.4f)
+        assertEquals(SettleReveal.DISTANCE_SCALE_FROM, SettleReveal.distanceScale(0), 0f)
+        var prevS = 0f; var prevA = 0f
+        for (t in 0L..SettleReveal.MAX_MS step 25) {
+            val s = SettleReveal.distanceScale(t); val a = SettleReveal.distanceAlpha(t)
+            assertTrue("t=$t s=$s", s in SettleReveal.DISTANCE_SCALE_FROM..1f && s >= prevS)
+            assertTrue("t=$t a=$a", a in SettleReveal.DISTANCE_ALPHA_FROM..1f && a >= prevA)
+            prevS = s; prevA = a
+        }
         // 칩은 차례로(앞 칩이 먼저), 도장은 마지막 칩이 착지한 뒤
         assertEquals(0f, SettleReveal.chipAt(0, 0), 0f)
         assertTrue(SettleReveal.chipAt(0, 1_000) > SettleReveal.chipAt(1, 1_000))
@@ -182,8 +237,8 @@ class MaterialBookTest {
         val lastChipDone = (0L..SettleReveal.MAX_MS step 10).first { SettleReveal.chipAt(chips - 1, it) >= 1f }
         assertEquals(0f, SettleReveal.stampAt(chips, lastChipDone), 0f)
         assertTrue(SettleReveal.stampStartMs(chips) > lastChipDone)
-        // 카운트업은 줄지 않는다
-        var prev = -1L
-        for (t in 0L..SettleReveal.COUNT_MS step 25) { val d = SettleReveal.distanceAt(987L, t); assertTrue(d >= prev); prev = d }
+        // 강조 진행도는 줄지 않는다
+        var prev = -1f
+        for (t in 0L..SettleReveal.COUNT_MS step 25) { val d = SettleReveal.distanceAt(t); assertTrue(d >= prev); prev = d }
     }
 }
