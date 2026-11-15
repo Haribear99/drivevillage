@@ -9,3 +9,6 @@ captures/
 *.jks
 keystore.properties
 .kotlin/
+
+# 생성 원본(용량): 컷아웃·스타일 보드만 추적
+design_src/assets/

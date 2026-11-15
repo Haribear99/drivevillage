@@ -18,7 +18,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import io.github.drivevillage.core.gate.Screen
+import io.github.drivevillage.ui.VillageArt
 import io.github.drivevillage.ui.VillageScreen
 import io.github.drivevillage.ui.VillageViewModel
 import io.github.drivevillage.ui.VillageTheme
@@ -29,6 +32,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 마을 그래픽을 미리 디코딩해 둔다(IO 스레드). 첫 화면에서 메인 스레드가 막히지 않게 한다.
+        lifecycleScope.launch { VillageArt.load(applicationContext) }
         setContent {
             val screen by vm.screen.collectAsState()
             val loaded by vm.stateLoaded.collectAsState()

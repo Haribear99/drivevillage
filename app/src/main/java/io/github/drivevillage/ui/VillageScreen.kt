@@ -70,6 +70,7 @@ fun VillageScreen(vm: VillageViewModel) {
     val today = vm.today()
     val timeSlot = SceneLedger.slotOf(now, java.time.ZoneId.systemDefault())
 
+    val needingCare = remember(state, odo, today) { io.github.drivevillage.core.village.Facilities.needingCare(state, odo, today) }
     // ── 마을 전경 ──
     val villagePane: @Composable (Modifier) -> Unit = { paneModifier ->
         BoxWithConstraints(paneModifier) {
@@ -77,6 +78,7 @@ fun VillageScreen(vm: VillageViewModel) {
                 modifier = Modifier.fillMaxSize(),
                 timeSlot = timeSlot,
                 workshopLevel = state.maintenance.workshopLevel,
+                needingCare = needingCare,
                 placed = state.materials.filter { it.placedSlot != null },
                 highlightSlots = selectedMaterial != null,
                 onResident = vm::tapResident,

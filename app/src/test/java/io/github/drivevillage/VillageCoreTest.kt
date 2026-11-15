@@ -328,6 +328,26 @@ class VillageCoreTest {
         assertTrue(after.open); assertEquals(DueBy.KM, after.dueBy)
     }
 
+    @Test fun facilities_dimOnlyWhilePairedQuestIsOpen() {
+        val d = day0.toEpochDay()
+        val s = withSetup(10_000.0, d)
+        assertTrue(io.github.drivevillage.core.village.Facilities.needingCare(started(), 1_000.0, d + 400).isEmpty()) // 설정 전
+        assertTrue(io.github.drivevillage.core.village.Facilities.needingCare(s, 12_000.0, d + 10).isEmpty()) // 새 사용자는 전부 켜짐
+        val month = LocalDate.ofEpochDay(d).plusMonths(1).toEpochDay()
+        val m = io.github.drivevillage.core.village.Facilities.needingCare(s, 12_000.0, month)
+        assertEquals(setOf(io.github.drivevillage.core.village.Facility.MILL, io.github.drivevillage.core.village.Facility.WINDMILL), m) // 냉각수·공기압 체크인
+        val oil = io.github.drivevillage.core.village.Facilities.needingCare(s, 20_000.0, d + 10)
+        assertEquals(setOf(io.github.drivevillage.core.village.Facility.FORGE, io.github.drivevillage.core.village.Facility.WINDMILL), oil) // 엔진오일·타이어 위치 10,000km
+    }
+
+    @Test fun facilities_unknownLastService_doesNotDimFromTheStart() {
+        val d = day0.toEpochDay()
+        val unknown = Maintenance.saveSetup(started(), Maintenance.newSetup(CarPreset.TUCSON_GAS, 0.0, d, 10_000, 12, d, lastServiceUnknown = true)!!)
+        // '모름'이면 엔진오일·타이어 위치·공조 필터는 기준 미확인으로 바로 열리지만, 처음부터 시설이 흐려지면 안 된다.
+        assertTrue(Maintenance.openQuests(unknown, 12_000.0, d + 1).any { it.baseUnconfirmed })
+        assertTrue(io.github.drivevillage.core.village.Facilities.needingCare(unknown, 12_000.0, d + 1).isEmpty())
+    }
+
     @Test fun quest_dateComesFirst() {
         val d = day0.toEpochDay()
         val s = withSetup(10_000.0, d)
